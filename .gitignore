@@ -1,0 +1,16 @@
+# Titkok - soha ne kerüljön be, a repo fejlesztés alatt publikus
+.env
+*.env
+!.env.example
+
+# Ansible
+*.retry
+.ansible/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# IDE
+.idea/
+.vscode/
