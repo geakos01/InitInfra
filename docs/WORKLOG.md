@@ -12,8 +12,8 @@
 > egyetlen dolog, amit el kell olvasni — plusz a [DESIGN.md](DESIGN.md)-t és a
 > [ROADMAP.md](ROADMAP.md)-t.
 
-**Hol tartunk:** a tervezés lezárva (17 döntés), a ROADMAP **0.1 fázisa kész**.
-A következő a **0.2–0.4**, amit a `scripts/setup-dev.sh` végigvezet.
+**Hol tartunk:** a tervezés lezárva (17 döntés), a ROADMAP **0.1–0.4 fázisa kész**.
+A fejlesztői környezet áll. A következő a **ROADMAP 1. fázisa**.
 
 **Mi van kész:**
 
@@ -22,18 +22,27 @@ A következő a **0.2–0.4**, amit a `scripts/setup-dev.sh` végigvezet.
 | `docs/DESIGN.md` | a teljes terv — mit építünk és miért, 17 döntés indoklással |
 | `docs/ROADMAP.md` | 10 fázisú építési útmutató, fázisonként kész-kritériummal |
 | `docs/WORKLOG.md` | ez a fájl |
-| `scripts/setup-dev.sh` | interaktív wizard a 0.2–0.4 lépésekhez |
+| `scripts/setup-dev.sh` | interaktív wizard a 0.2–0.4 lépésekhez (idempotens, újrafuttatható) |
 | `.gitattributes` | `* text=auto eol=lf` — az első commit óta, ez nem véletlen |
 | `.claude/settings.json` | 5 read-only parancs engedélylistája |
-| git | `main` ág, tiszta munkafa |
+| git | `main` ág, publikus GitHub repo, `origin` beállítva |
 
-**Mi a következő teendő, sorrendben:**
+**A fejlesztői környezet (0.2–0.4):**
 
-1. `bash scripts/setup-dev.sh` — WSL2, eldobható Ubuntu VM, GitHub repo
-   (a `gh` telepítve van, de **nincs bejelentkezve** — a script elindítja a `gh auth login`-t)
-2. Utána a **ROADMAP 1. fázisa**: kézzel végigtelepíteni mindent a VM-en, és a működő
-   parancsokat leírni a `docs/manual-install.md`-be. Ez adja a 2. fázis Ansible-jének
-   a bemenetét.
+| | |
+|---|---|
+| Gazdagép | ASUS TUF B550M-PLUS, Ryzen 7 5700, 31.8 GB RAM, 16 szál |
+| WSL2 | `Ubuntu-24.04`, felhasználó `geakos`, **systemd bekapcsolva** (`/etc/wsl.conf`) |
+| Multipass | 1.16.3, backend `hyperv` |
+| Cél-VM | `infra` — Ubuntu 24.04.4 LTS, 4 mag / 8 GB / 40 GB |
+| Hozzáférés | `ssh ubuntu@$VM_IP` az `~/.ssh/id_ed25519` kulccsal |
+| `.env` | `VM_NAME`, `VM_IP` — **gitignore-olt**, nem kerül a repóba |
+
+**Mi a következő teendő:**
+
+A **ROADMAP 1. fázisa**: kézzel végigtelepíteni mindent a VM-en, és a működő
+parancsokat leírni a `docs/manual-install.md`-be. Ez adja a 2. fázis Ansible-jének
+a bemenetét.
 
 **A terv lényege egy bekezdésben:** egy szűz Linux gépből egyetlen `curl | bash`
 paranccsal működő futtatókörnyezetet csinálunk. **Minden szolgáltatás konténerben**
@@ -49,6 +58,10 @@ pinnelve.
 - A fejlesztés Windowsról megy, a célgép Linux — a CRLF és az exec bit valódi buktató
 - A `/opt/stack` a célgépen **generált**; amit ott kézzel javítasz, elvész
 - A dev VM **eldobható**: hiba esetén a repóban javítunk, nem a gépen
+- A VM IP-je Hyper-V NAT-os, és **újraindításkor változhat** — ha az ssh nem megy,
+  `multipass info infra` és frissítsd a `.env`-et (vagy futtasd újra a `setup-dev.sh`-t)
+- A `mem_limit` értékeket a 2. fázisban **változóból** generáljuk, ne bedrótozva: a
+  valódi gép 32 GB, a dev VM 8 GB — a bedrótozott limitek a VM-en elfogynának
 
 ---
 
@@ -82,3 +95,41 @@ alparancs**) a Claude Code eleve auto-allow-olja. Ezért a `.claude/settings.jso
 csak öt előretekintő szabály került (`multipass info`, `docker compose ps/logs/config`).
 Szándékosan **nem** került bele az `ssh`, `rsync`, `ansible-playbook` és a
 `docker compose up` — mindegyik vagy távoli kódfuttatás, vagy állapotot módosít.
+
+---
+
+## 2026-08-21 — A fejlesztői környezet áll (0.2–0.4 fázis)
+
+### Mi történt
+
+**Egy hardveres blokkolóba futottunk, mielőtt bármi telepíthető lett volna.** A
+`wsl --install -d Ubuntu-24.04` letöltötte a disztrót, de a regisztráció elhasalt
+`HCS_E_HYPERV_NOT_INSTALLED` hibával. A vizsgálat kiderítette, hogy nem a Hyper-V
+kapcsoló hiányzott, hanem mélyebben volt a baj:
+
+```
+HypervisorPresent             : False
+VirtualizationFirmwareEnabled : False    <- a gyokerok
+```
+
+Az **AMD SVM ki volt kapcsolva a BIOS-ban**. A `VirtualMachinePlatform` hiába
+mutatta magát „Enabled"-nek — firmware-támogatás nélkül a hypervisor nem indul el.
+Ez azért érdemel feljegyzést, mert a Windows WMI-állapota **félrevezető**: a
+funkció „Enabled", miközben használhatatlan.
+
+A feloldás egyetlen újraindítással ment: `Enable-WindowsOptionalFeature ... -NoRestart`
+elevált shellből, majd `shutdown /r /fw /t 0` — ez egyenesen a UEFI-be indít újra,
+így nem kell a `Del` billentyűt időzíteni.
+
+**Utána minden simán ment:** WSL2 Ubuntu 24.04.4, Multipass 1.16.3 (hyperv backend),
+`infra` VM, SSH kulcs, `.env`.
+
+### Két döntés, amit érdemes tudni
+
+**A WSL-ben bekapcsoltuk a systemd-t** (`/etc/wsl.conf`). Nem kötelező, de közelebb
+viszi a dev shellt ahhoz, ahogy a célgép viselkedik.
+
+**A repo publikus lett, a terv szerint.** Felmerült, hogy maradjon privát a 8. fázisig
+(a tokenmentes `curl | bash` teszt az egyetlen, aminek tényleg kell a publikusság),
+de a 15. döntés szó szerinti követése mellett döntöttünk. Publikálás előtt a követett
+fájlok és a teljes git history át lett fésülve titkokra — tiszta.

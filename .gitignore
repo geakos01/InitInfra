@@ -17,3 +17,6 @@ __pycache__/
 
 # Claude Code személyes felülbírálások
 .claude/settings.local.json
+
+# Git Bash összeomlás-dumpok
+*.stackdump
