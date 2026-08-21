@@ -41,6 +41,20 @@ Ellenőrzés, hogy tényleg LF került az indexbe:
 git ls-files --eol      # mindenhol i/lf w/lf kell hogy legyen
 ```
 
+### 0.2–0.4 egyben: `scripts/setup-dev.sh`
+
+A következő három lépés (WSL2, VM, GitHub repo) végigvezetve, ellenőrzésekkel:
+
+```bash
+bash scripts/setup-dev.sh
+```
+
+Idempotens: bármikor újrafuttatható, a már elvégzett lépéseket kihagyja, és a `.env`-be
+írja a `VM_NAME`, `VM_IP` és `GH_OWNER` értékeket. Ha valamit nem tudott elvégezni, a
+végén kiírja, mi maradt kézi munkának.
+
+Az alábbi szakaszok azt írják le, mit csinál — kézzel is elvégezhetők.
+
 ### 0.2 WSL2
 
 Nem control node — az Ansible a célgépen fut —, de innen `rsync`-elsz és `ssh`-zol:
