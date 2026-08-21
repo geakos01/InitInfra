@@ -11,6 +11,9 @@
 3. **Előbb kézzel, aztán Ansible.** Ne az Ansible-t tanuld és az installt tervezd
    egyszerre.
 4. **A `/opt/stack` generált.** Amit ott javítasz, a következő futásnál elvész.
+5. **Minden munkamenet végén egy bejegyzés a [WORKLOG.md](WORKLOG.md)-be.** Hol
+   tartunk, mi dőlt el, mi jön. Ez nem a git log helyettesítője — az a commitokat
+   rögzíti, ez a munkameneteket, hogy hetek múlva is fel lehessen venni a fonalat.
 
 ---
 
