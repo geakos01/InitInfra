@@ -32,10 +32,11 @@ A fejlesztői környezet áll. A következő a **ROADMAP 1. fázisa**.
 | | |
 |---|---|
 | Gazdagép | ASUS TUF B550M-PLUS, Ryzen 7 5700, 31.8 GB RAM, 16 szál |
-| WSL2 | `Ubuntu-24.04`, felhasználó `geakos`, **systemd bekapcsolva** (`/etc/wsl.conf`) |
+| WSL2 | `Ubuntu-24.04`, user `geakos`, systemd be — **opcionális, nem használjuk** |
 | Multipass | 1.16.3, backend `hyperv` |
 | Cél-VM | `infra` — Ubuntu 24.04.4 LTS, 4 mag / 8 GB / 40 GB |
-| Hozzáférés | `ssh ubuntu@$VM_IP` az `~/.ssh/id_ed25519` kulccsal |
+| Hozzáférés | `ssh ubuntu@$VM_IP` (alapértelmezett kulcs), vagy `multipass shell infra` |
+| Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
 | `.env` | `VM_NAME`, `VM_IP` — **gitignore-olt**, nem kerül a repóba |
 
 **Mi a következő teendő:**
@@ -126,8 +127,12 @@ elevált shellből, majd `shutdown /r /fw /t 0` — ez egyenesen a UEFI-be indí
 
 ### Két döntés, amit érdemes tudni
 
-**A WSL-ben bekapcsoltuk a systemd-t** (`/etc/wsl.conf`). Nem kötelező, de közelebb
-viszi a dev shellt ahhoz, ahogy a célgép viselkedik.
+**A WSL2 kikerült a munkamenetből.** Telepítés után derült ki, hogy **el sem éri a
+Multipass VM-et** — külön virtuális hálózaton ülnek, az `ssh` timeoutol. A WSL azért
+volt a tervben, hogy onnan `rsync`-eljünk (a Git Bashben nincs `rsync`). Az `rsync`
+helyett a `git push` / `git pull` hurok mellett döntöttünk: ez pontosan az az út,
+amit a bootstrap élesben használ, tehát minden iteráció a produkciós utat is teszteli.
+A WSL telepítve maradt (systemd bekapcsolva), de semmi nem függ tőle.
 
 **A repo publikus lett, a terv szerint.** Felmerült, hogy maradjon privát a 8. fázisig
 (a tokenmentes `curl | bash` teszt az egyetlen, aminek tényleg kell a publikusság),

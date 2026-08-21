@@ -368,7 +368,7 @@ Három külön dolog, és fontos nem összekeverni őket:
 
 | Útvonal | Mi | Ki írja |
 |---|---|---|
-| `/opt/initinfra` | Az InitInfra repo klónja — a playbook forrása | `git pull`, vagy `make dev` rsync |
+| `/opt/initinfra` | Az InitInfra repo klónja — a playbook forrása | `git pull` |
 | `/opt/stack` | A generált futtatókörnyezet: compose fájlok, `.env`, Dockerfile, requirements | **Az Ansible generálja** — kézzel ne szerkeszd |
 | `/opt/app` | A modellkód | `git pull` az ügyfél repójából |
 
@@ -382,11 +382,28 @@ repóban kell — ezért van a függőséglista is változóként, lásd lentebb
 
 ### Az installer fejlesztése
 
-Fejlesztés közben nem GitHubról jön a playbook:
+Fejlesztés közben **ugyanaz az út, mint élesben**: a kód GitHubon keresztül jut a gépre.
 
 ```bash
-make dev      # rsync a VM-re, majd helyi ansible-playbook futtatás
+# a fejlesztőgépen
+git commit -am "wip" && git push
+
+# a VM-en
+cd /opt/initinfra && git pull && make dev
 ```
+
+A `make dev` nem másol sehonnan — csak lefuttatja helyben azt, ami már ott van
+(`ansible-playbook -i localhost, -c local`).
+
+**Miért nem `rsync`?** Mert a bootstrap élesben is `git pull`-lal szerzi meg a repót.
+Ha fejlesztés közben megkerülnénk ezt, pont azt az utat nem tesztelnénk, amit
+szállítunk — és a hiba akkor derülne ki, amikor a legdrágább. Cserébe minden
+próbához kell egy commit; nyugodtan `wip` üzenettel, a végén összevonva.
+
+> A fejlesztőgépen a WSL2 **nem szükséges**. Eredetileg az `rsync` miatt szerepelt a
+> tervben, de az `rsync` kiesett — ráadásul a WSL2 és a Multipass VM külön virtuális
+> hálózaton ül, így el sem érik egymást. A VM-hez `ssh` vagy `multipass shell` kell,
+> mindkettő megy Git Bashből és PowerShellből is.
 
 **Az arany szabály: a VM eldobható.** Ha valami nem megy, a javítás a repóban történik,
 a VM-et pedig eldobod és újra létrehozod (`multipass delete --purge`, vagy Hyper-V
@@ -541,3 +558,16 @@ loopback + tunnel.
 **2026-08-20 — a függőséglista helye tisztázva.** A Docker-váltás után kiderült, hogy
 az `app` image-et a telepítéskor kell felépíteni, a modellkód viszont csak utána kerül
 a gépre. Ezért a `requirements.txt` az InitInfra repóba került, nem a modellkód mellé.
+
+**2026-08-21 — az `rsync`-es fejlesztői hurok elvetve, a WSL2 opcionális lett.** A terv
+szerint a kód `rsync`-kel került volna a VM-re, és ehhez kellett volna a WSL2 (a Git
+Bashben nincs `rsync`). A dev környezet felállításakor kiderült, hogy **a WSL2 el sem
+éri a Multipass VM-et**: külön virtuális hálózaton ülnek, az `ssh` timeoutol. Két út
+maradt: megjavítani a WSL hálózatát (`networkingMode=mirrored`), vagy elhagyni az
+`rsync`-et.
+
+Az `rsync` esett ki, és nem kényszerből: a bootstrap élesben `git pull`-lal szerzi meg
+a repót, tehát az `rsync` pont a szállított utat kerülte volna meg. Így minden
+fejlesztői iteráció egyben a produkciós út tesztje is. Ára: minden próbához kell egy
+commit. A WSL2 telepítve maradhat kényelmi shellnek, de kikerült a dokumentált
+munkamenetből.

@@ -55,9 +55,12 @@ végén kiírja, mi maradt kézi munkának.
 
 Az alábbi szakaszok azt írják le, mit csinál — kézzel is elvégezhetők.
 
-### 0.2 WSL2
+### 0.2 WSL2 — *opcionális*
 
-Nem control node — az Ansible a célgépen fut —, de innen `rsync`-elsz és `ssh`-zol:
+**Nem szükséges a munkához.** Eredetileg az `rsync` miatt került ide, de a kód
+`git push` / `git pull` úton jut a VM-re (lásd a DESIGN 7. szakaszát), és a WSL2
+külön virtuális hálózaton ül, mint a Multipass VM — el sem érik egymást.
+Kényelmi Linux shellnek jó, a VM-hez nem kell. Ha mégis kell:
 
 ```powershell
 wsl --install -d Ubuntu-24.04
@@ -70,7 +73,7 @@ multipass launch 24.04 --name infra --cpus 4 --memory 8G --disk 40G
 multipass info infra          # innen az IP
 ```
 
-Tedd fel az SSH kulcsodat, hogy `ssh`-val és `rsync`-kel is elérd. Hyper-V-vel is
+Tedd fel az SSH kulcsodat, hogy `ssh`-val elérd. Hyper-V-vel is
 mehet, csak akkor csinálj **snapshotot a friss telepítésről**, mert oda fogsz
 visszaállni sokszor.
 
@@ -141,8 +144,16 @@ A `base` és `docker` szerepkör az 1. fázis jegyzeteinek 1–3. pontja, Ansibl
 ezt fogod használni:
 
 ```bash
-make dev     # rsync a VM-re, majd ansible-playbook -i localhost, -c local
+# a fejlesztőgépen
+git commit -am "wip" && git push
+
+# a VM-en (ssh ubuntu@$VM_IP)
+cd /opt/initinfra && git pull && make dev
 ```
+
+A `make dev` helyben futtat: `ansible-playbook -i localhost, -c local`. A kód
+ugyanazon az úton jut a gépre, mint élesben lesz — ezért minden iteráció egyben a
+bootstrap útját is teszteli.
 
 **Kész, ha:** friss VM-en lefut hibátlanul, **és másodszorra is** — a második futás
 minden taskra `ok`-ot ír, nem `changed`-et. Ha a második futás is `changed`, ott

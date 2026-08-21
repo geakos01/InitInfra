@@ -190,7 +190,8 @@ banner "InitInfra · fejlesztői környezet (ROADMAP 0.2–0.4)"
 
 # ── 1. WSL2 ───────────────────────────────────────────────────────────────
 stage "WSL2 · Ubuntu 24.04"
-say "A WSL2 nem control node — az Ansible a célgépen fut —, de innen rsync-elsz és ssh-zol."
+say "Opcionális: kényelmi Linux shell. A VM-hez nem kell — oda ssh-val vagy"
+  say "multipass shell-lel mész, a kód pedig git push/pull úton jut oda."
 if wsl.exe -l -q 2>/dev/null | tr -d '\r\0' | grep -qi 'Ubuntu-24.04'; then
   say "${GREEN}✓${RESET} Ubuntu-24.04 már telepítve van a WSL-be."
 else
@@ -251,7 +252,7 @@ else
     fi
     PUBKEY=$(cat "$SSH_KEY.pub")
 
-    say "SSH kulcs feltöltése a VM-re, hogy ssh és rsync is működjön..."
+    say "SSH kulcs feltöltése a VM-re..."
     multipass exec "$VM_NAME" -- bash -c \
       "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && grep -qxF '$PUBKEY' ~/.ssh/authorized_keys || echo '$PUBKEY' >> ~/.ssh/authorized_keys"
 
