@@ -280,8 +280,17 @@ allowed_ips:
   - 5.6.7.8      # otthon
 ```
 
-A két mód között a különbség mindössze a compose port-bindingje (`127.0.0.1` helyett
-`0.0.0.0`) és néhány ufw szabály — ezért érdemes változónak hagyni, nem eldönteni.
+A két mód között a különbség a compose port-bindingje (`127.0.0.1` helyett `0.0.0.0`)
+és a tűzfalszabályok — ezért érdemes változónak hagyni, nem eldönteni.
+
+> **Figyelem: a szűrés NEM `ufw` szabállyal történik.** Az 1. fázisban méréssel
+> kiderült, hogy **a Docker megkerüli az `ufw`-t**: közvetlenül az iptables `FORWARD`
+> láncába ír, az `ufw` szabályai elé. Egy publikált konténer-port akkor is elérhető
+> kívülről, ha az `ufw status` szerint tiltva van — vagyis a tűzfal hamis biztonságot
+> mutatna. A szűrést a `DOCKER-USER` láncba kell tenni, `--ctorigdstport` és
+> `--ctdir ORIGINAL` matchekkel, az `ufw` `after.rules`-ából perzisztálva. A működő,
+> újraindítás után is ellenőrzött recept a
+> [manual-install.md](manual-install.md) 4. szakaszában van.
 
 **Ha a publikálást használod, két dologra figyelj:**
 
@@ -571,3 +580,16 @@ a repót, tehát az `rsync` pont a szállított utat kerülte volna meg. Így mi
 fejlesztői iteráció egyben a produkciós út tesztje is. Ára: minden próbához kell egy
 commit. A WSL2 telepítve maradhat kényelmi shellnek, de kikerült a dokumentált
 munkamenetből.
+
+**2026-08-21 — a publikált felületek szűrése nem `ufw`-vel megy.** A terv szerint a
+`publish_web_ui: true` mód „néhány ufw szabállyal" korlátozta volna a hozzáférést az
+`allowed_ips` címekre. Az 1. fázisban méréssel kiderült, hogy ez **így nem működött
+volna**: a Docker közvetlenül az iptables `FORWARD` láncába ír, az `ufw` szabályai elé,
+így a publikált portok az `ufw` tiltása ellenére kívülről elérhetők. Az `ufw status`
+zárt portot mutatott, miközben a szolgáltatás HTTP 200-zal válaszolt a világnak.
+
+A szűrés ezért a `DOCKER-USER` láncba került. A recept két nem nyilvánvaló elemet
+igényel: `--ctorigdstport` (a `DOCKER-USER` a DNAT után fut, ott már a konténer belső
+portja látszik) és `--ctdir ORIGINAL` (enélkül a konténer válaszát is eldobja, és a
+tünet megtévesztő: az `ACCEPT` számlálója nő, a kapcsolat mégsem jön létre). Mindkettő
+ellenőrizve, újraindítás után is.
