@@ -25,11 +25,17 @@ léteznie, különben a rossz sorvégek beleégnek a történetbe:
 
 ```bash
 cd InitInfra
-git init
+git init -b main
 printf '* text=auto eol=lf\n' > .gitattributes
-printf '.env\n*.retry\n__pycache__/\n' > .gitignore
+# .gitignore: .env, *.retry, .ansible/, __pycache__/, .idea/, .vscode/
 git add .gitattributes .gitignore docs/
 git commit -m "Váz: sorvégek, gitignore, tervdokumentáció"
+```
+
+Ellenőrzés, hogy tényleg LF került az indexbe:
+
+```bash
+git ls-files --eol      # mindenhol i/lf w/lf kell hogy legyen
 ```
 
 ### 0.2 WSL2
