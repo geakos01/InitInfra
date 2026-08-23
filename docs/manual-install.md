@@ -20,10 +20,18 @@ Szűz Ubuntu 24.04 szerver, SSH-val elérve. A fejlesztői VM létrehozása:
 multipass launch 24.04 --name infra --cpus 4 --memory 8G --disk 40G
 ```
 
-> **A VM IP-je újraindításkor megváltozhat.** Ez menet közben be is következett:
-> `172.31.207.195` → `172.31.199.53`. Ha az `ssh` timeoutol, `multipass info infra`,
-> és frissítsd a `.env`-et. A `multipass info` néha a régi IP-t is listázza — a
-> működőt próbálgatással kell megtalálni.
+> **A VM IP-je minden újraindításkor megváltozik.** Három újraindítás, három cím:
+> `172.31.207.195` → `172.31.199.53` → `172.31.197.191` → `172.31.197.103`. A
+> `multipass info` ráadásul néha a régi címet is listázza, tehát próbálgatni kellene.
+>
+> **Ne az IP-t használd, hanem a nevet:** a Hyper-V DNS-e feloldja a
+> `<vm-nev>.mshome.net` alakot, és követi a változást:
+>
+> ```bash
+> ssh ubuntu@infra.mshome.net
+> ```
+>
+> Ez fejlesztői kényelem; az éles gépen fix IP vagy valódi DNS-név lesz.
 
 ---
 
@@ -87,6 +95,7 @@ bekapcsolni.
 
 > **A csoporttagság csak új munkamenetben él.** A `usermod` után a *futó* SSH
 > munkamenet még nem látja; lépj ki és vissza, csak utána megy a `docker` `sudo` nélkül.
+> Ansible-ben ez `meta: reset_connection`, vagy `become: true` a Docker-taskokon.
 
 Ellenőrzés:
 
@@ -222,9 +231,7 @@ iptables -A DOCKER-USER -p tcp \
 
 Az `iptables -A` nem éli túl az újraindítást. Az `ufw` `after.rules`-ába kell tenni:
 
-```bash
-sudo tee -a /etc/ufw/after.rules <<'EOF'
-
+```
 # BEGIN INITINFRA DOCKER-USER
 *filter
 :DOCKER-USER - [0:0]
@@ -233,10 +240,9 @@ sudo tee -a /etc/ufw/after.rules <<'EOF'
 -A DOCKER-USER -j RETURN
 COMMIT
 # END INITINFRA DOCKER-USER
-EOF
-
-sudo ufw reload
 ```
+
+Utána `sudo ufw reload`.
 
 **Ellenőrizve: teljes újraindítás után is élt** — a szabályok megvoltak, a
 `--restart unless-stopped` konténer magától visszajött, a kívülről jövő kérés HTTP
@@ -261,26 +267,228 @@ a `DOCKER-USER` szabályok csak akkor kellenek, ha `publish_web_ui: true`.
 
 ---
 
-## Állapot a fázis végén
+## 5. PostgreSQL
 
-Takarítás után a VM:
+### 5.1 Könyvtár és titkok
+
+A titkok **a gépen generálódnak, sosem a repóban**:
+
+```bash
+sudo mkdir -p /opt/stack/initdb
+sudo chown -R ubuntu:ubuntu /opt/stack
+```
+
+Az `/opt/stack/.env` tartalma (a jelszavak `openssl rand -hex 24` kimenetei), `chmod 600`:
 
 ```
-docker:      29.7.2
-konténerek:  0        image-ek: 0
-ufw:         active   (csak 22/tcp)
+POSTGRES_AIRFLOW_DB=airflow
+POSTGRES_AIRFLOW_USER=airflow
+POSTGRES_AIRFLOW_PASSWORD=<48 hex karakter>
+POSTGRES_APP_DB=app
+POSTGRES_APP_USER=app
+POSTGRES_APP_PASSWORD=<48 hex karakter>
+REDIS_MAXMEMORY=512mb
+```
+
+> **`-hex`, nem `-base64`.** A base64 kimenetében van `/`, `+` és `=`; ezek elszállnak
+> a `psql` string-literáljában és a compose `${...}` interpolációjában is. A hex csak
+> `[0-9a-f]`, tehát mindenhol biztonságos. 24 bájt = 48 karakter, bőven elég.
+
+### 5.2 A compose fájl
+
+```yaml
+name: initinfra
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_AIRFLOW_DB}
+      POSTGRES_USER: ${POSTGRES_AIRFLOW_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_AIRFLOW_PASSWORD}
+      APP_DB: ${POSTGRES_APP_DB}
+      APP_USER: ${POSTGRES_APP_USER}
+      APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_AIRFLOW_USER} -d $${POSTGRES_AIRFLOW_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres-data:
+```
+
+> **A `$$` a healthcheckben nem elgépelés.** A compose a `${...}`-t saját maga
+> behelyettesítené a `.env`-ből; a `$$` azt mondja neki, hogy hagyja békén, és a
+> konténeren belüli shell oldja fel futásidőben.
+
+> **Nincs `version:` kulcs.** A modern Compose elavultnak jelöli és figyelmeztet rá.
+
+### 5.3 A második adatbázis
+
+Az image csak egy adatbázist hoz létre (`POSTGRES_DB`). Az alkalmazásét init-szkript
+csinálja: `/opt/stack/initdb/10-app-db.sh`, futtathatóra állítva. Tartalma:
+
+```bash
+#!/bin/bash
+set -e
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE USER "$APP_USER" WITH PASSWORD '$APP_PASSWORD';
+    CREATE DATABASE "$APP_DB" OWNER "$APP_USER";
+EOSQL
+```
+
+> **Ez CSAK az első indításkor fut le**, üres adatkönyvtár esetén. Ha a volume már
+> létezik, a `postgres` image átugorja — mérve: két újraindítás után is pontosan
+> egyszer szerepelt a logban. Utólagos séma-változtatásra tehát **nem alkalmas**;
+> arra migrációs eszköz kell.
+
+### 5.4 Indítás és ellenőrzés
+
+```bash
+cd /opt/stack
+docker compose config --quiet     # a fájl érvényes-e
+docker compose up -d
+docker compose ps                 # (healthy) ~9 mp alatt
+```
+
+Ellenőrizve:
+
+| | |
+|---|---|
+| PostgreSQL verzió | 16.15 |
+| `airflow` DB | megvan, tulajdonos `airflow` |
+| `app` DB | megvan, tulajdonos `app` |
+| Belépés az `app` userrel a saját DB-jébe | működik |
+| `127.0.0.1:5432` kívülről | **zárva** (`TcpTestSucceeded: False`) |
+
+> **A loopback-kötés az, ami ténylegesen véd** — nem az `ufw`. A 4. szakasz csapdája
+> ide nem ér el, mert a Docker eleve nem publikálja kifelé a portot.
+
+---
+
+## 6. Redis
+
+A compose-hoz hozzáadva:
+
+```yaml
+  redis:
+    image: redis:7.2
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - ${REDIS_MAXMEMORY}
+      - --maxmemory-policy
+      - allkeys-lru
+    tmpfs:
+      - /data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+```
+
+> **A `command` listás formában kell.** A `--save ""` üres sztringje a stringes
+> formában elveszne a shell-feldolgozásban. Listaként a Docker pontosan azt adja át,
+> ami ott áll.
+
+> **`tmpfs: /data`, mert a `redis` image `VOLUME /data`-t deklarál.** Enélkül minden
+> újralétrehozásnál keletkezik egy névtelen volume. Ráadásul a **Compose átörökíti a
+> névtelen volume-ot** a konténer újralétrehozásakor, tehát a `tmpfs` utólagos
+> hozzáadása önmagában nem takarítja el — a régi volume ott maradt a konténeren, a
+> `tmpfs` csak fölé mountolódott. Ki kell kényszeríteni:
+>
+> ```bash
+> docker compose rm -sfv redis && docker compose up -d redis
+> docker volume prune -f
+> ```
+>
+> **`docker compose down -v` SOHA** — az a `postgres-data` named volume-ot is törölné.
+
+A **tényleges futási** konfiguráció ellenőrzése (a terv ezt külön kéri, mert a beírt és
+az érvényes érték nem ugyanaz):
+
+```bash
+docker compose exec -T redis redis-cli ping                        # PONG
+docker compose exec -T redis redis-cli config get maxmemory        # 536870912
+docker compose exec -T redis redis-cli config get maxmemory-policy # allkeys-lru
+docker compose exec -T redis redis-cli config get appendonly       # no
+docker compose exec -T redis redis-cli config get save             # <üres>
+```
+
+A `/data` üres marad — nincs RDB és nincs AOF fájl.
+
+---
+
+## Amit az újraindítás-próbák igazoltak
+
+Három teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
+
+| | |
+|---|---|
+| swap, időzóna, `ufw`, `fail2ban` | túlélte |
+| `DOCKER-USER` szabályok (`after.rules`-ból) | túlélte |
+| konténerek (`restart: unless-stopped`) | maguktól visszajöttek, ~19 mp alatt healthy |
+| Postgres adat (named volume) | **megmaradt** |
+| Redis adat (tmpfs) | **elveszett — ez a tervezett viselkedés (11. döntés)** |
+| az `initdb` szkript | **nem futott újra** |
+| a VM IP-je | **mindháromszor megváltozott** |
+
+---
+
+## Állapot a fázis végén
+
+```
+docker:      29.7.2          compose: v5.5.0
+szolgáltatások:
+  postgres   healthy   127.0.0.1:5432
+  redis      healthy   127.0.0.1:6379
+volume-ok:   initinfra_postgres-data   (és semmi más)
+ufw:         active    (csak 22/tcp)
 fail2ban:    active
-swap:        4G
+swap:        4G        swappiness: 10
 időzóna:     Europe/Budapest
 DOCKER-USER: üres
 ```
 
 ---
 
-## Következő lépések (ROADMAP 1. fázis, 4–9.)
+## Nyitott pontok a 2. fázisnak
 
-- [ ] 4. Minimális `docker-compose.yml` Postgresszel
-- [ ] 5. Redis
+- A `mem_limit` értékek **változóból** jöjjenek: az éles gép 32 GB, a dev VM 8 GB.
+  Bedrótozott limitekkel a VM-en elfogyna a memória.
+- A `REDIS_MAXMEMORY`, a swap mérete és az időzóna ugyanígy `group_vars` alapértelmezés.
+- A `DOCKER-USER` blokk sablonja **mindig renderelődjön**, akkor is, ha üres.
+- A `docker` csoporttagság miatt a Docker-taskok előtt `meta: reset_connection` kell,
+  vagy `become: true`.
+- Az `initdb` szkript egyszeri természete miatt a séma-változtatásokhoz külön út kell.
+
+---
+
+## Következő lépések (ROADMAP 1. fázis)
+
+- [x] 1. Rendszerfrissítés
+- [x] 2. Docker a hivatalos repóból
+- [x] 3. Gép-higiénia (`ufw`, `fail2ban`, `unattended-upgrades`, swap, időzóna)
+- [x] 4. Minimális `docker-compose.yml` Postgresszel
+- [x] 5. Redis
 - [ ] 6. Az `app` image: `FROM apache/airflow:3.3.1-python3.12`
 - [ ] 7. Airflow négy komponense, LocalExecutorral
 - [ ] 8. Prometheus, exporterek, Grafana

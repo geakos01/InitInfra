@@ -13,9 +13,10 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1–3. lépése** is (rendszerfrissítés, Docker, gép-higiénia). A jegyzet a
-[manual-install.md](manual-install.md)-ben gyűlik. Következő: az **1. fázis 4. lépése**,
-a minimális compose Postgresszel.
+1–5. lépése** is: rendszerfrissítés, Docker, gép-higiénia, **Postgres és Redis**.
+A VM-en mindkét szolgáltatás `healthy`, loopbackre kötve. A jegyzet a
+[manual-install.md](manual-install.md)-ben gyűlik. Következő: az **1. fázis 6. lépése**,
+az `app` image (`FROM apache/airflow:3.3.1-python3.12`).
 
 **Mi van kész:**
 
@@ -24,6 +25,7 @@ a minimális compose Postgresszel.
 | `docs/DESIGN.md` | a teljes terv — mit építünk és miért, 17 döntés indoklással |
 | `docs/ROADMAP.md` | 10 fázisú építési útmutató, fázisonként kész-kritériummal |
 | `docs/WORKLOG.md` | ez a fájl |
+| `docs/manual-install.md` | **az 1. fázis terméke** — minden működő parancs, indoklással |
 | `scripts/setup-dev.sh` | interaktív wizard a 0.2–0.4 lépésekhez (idempotens, újrafuttatható) |
 | `.gitattributes` | `* text=auto eol=lf` — az első commit óta, ez nem véletlen |
 | `.claude/settings.json` | 5 read-only parancs engedélylistája |
@@ -38,15 +40,20 @@ a minimális compose Postgresszel.
 | Multipass | 1.16.3, backend `hyperv` |
 | Cél-VM | `infra` — Ubuntu 24.04.4 LTS, 4 mag / 8 GB / 40 GB |
 | A VM-en | Docker 29.7.2 + Compose v5.5.0, ufw (csak 22), fail2ban, 4G swap, Europe/Budapest |
-| Hozzáférés | `ssh ubuntu@$VM_IP` (alapértelmezett kulcs), vagy `multipass shell infra` |
+| A stack | `/opt/stack` — `postgres:16` (`airflow` + `app` DB) és `redis:7.2`, mindkettő `127.0.0.1`-en |
+| Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — stabil név; az IP minden újraindításkor változik |
 | Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
-| `.env` | `VM_NAME`, `VM_IP` — **gitignore-olt**, nem kerül a repóba |
+| `.env` | `VM_NAME`, `VM_HOST`, `VM_IP`, `GH_OWNER` — **gitignore-olt** |
 
 **Mi a következő teendő:**
 
-Az **1. fázis 4–9. lépése**: compose Postgresszel, Redis, az `app` image, az Airflow
-négy komponense, observability, Jupyter. Minden működő parancs megy a
+Az **1. fázis 6–9. lépése**: az `app` image, az Airflow négy komponense
+LocalExecutorral, observability, Jupyter. Minden működő parancs megy a
 `manual-install.md`-be — az adja a 2. fázis Ansible-jének a bemenetét.
+
+A 4–5. lépés három újraindítást is kiállt: a Postgres adata megmaradt (named volume),
+a Redisé eltűnt (tmpfs) — pontosan a 11. döntés szerint —, és az `initdb` szkript
+**nem** futott újra.
 
 **A terv lényege egy bekezdésben:** egy szűz Linux gépből egyetlen `curl | bash`
 paranccsal működő futtatókörnyezetet csinálunk. **Minden szolgáltatás konténerben**
@@ -66,8 +73,11 @@ pinnelve.
   kell szűrni. Mérve és dokumentálva: `manual-install.md` 4. szakasza
 - A Git Bash `grep`-je **összeomlik** ezen a gépen (lásd a `*.stackdump`-ot), és
   csendben üres eredményt ad. Keresésre Pythont használj, ne `grep`-et
-- A VM IP-je Hyper-V NAT-os, és **újraindításkor változhat** — ha az ssh nem megy,
-  `multipass info infra` és frissítsd a `.env`-et (vagy futtasd újra a `setup-dev.sh`-t)
+- A VM IP-je **minden újraindításkor megváltozik** (három próba, három cím). Ne az
+  IP-t használd: `ssh ubuntu@infra.mshome.net` — a Hyper-V DNS-e követi
+- A **Compose átörökíti a névtelen volume-okat** konténer-újralétrehozáskor, ezért egy
+  utólag hozzáadott `tmpfs` nem takarítja el a régit — `docker compose rm -sfv <service>` kell
+- **`docker compose down -v` SOHA** a VM-en: a `postgres-data` named volume-ot is törli
 - A `mem_limit` értékeket a 2. fázisban **változóból** generáljuk, ne bedrótozva: a
   valódi gép 32 GB, a dev VM 8 GB — a bedrótozott limitek a VM-en elfogynának
 
@@ -180,3 +190,35 @@ mégsem jön létre — mert a konténer válaszát dobja el a saját `DROP` sza
 **Az `after.rules`-ból eltávolított blokk szabályai bennmaradnak az élő láncban** — mert
 a resetelő `:DOCKER-USER - [0:0]` sor is eltűnik velük. Ezért a sablon **mindig** írja ki
 a blokkot, üresen is, különben a kikapcsolás nem működik.
+
+---
+
+## 2026-08-21 (2) — Postgres és Redis áll a VM-en (1. fázis, 4–5. lépés)
+
+### Mi történt
+
+A stack első két szolgáltatása fut a `/opt/stack`-ben: **egy Postgres 16, két
+adatbázissal** (`airflow` és `app`, külön userekkel, a másodikat `initdb` szkript
+hozza létre), és egy **Redis 7.2 perzisztencia nélkül**. Mindkettő `healthy`,
+mindkettő `127.0.0.1`-re kötve, a jelszavak a gépen generálva (`openssl rand -hex 24`).
+
+Három teljes újraindítással ellenőrizve: a Postgres adata megmarad, a Redisé eltűnik,
+a konténerek maguktól visszajönnek, az `initdb` szkript nem fut újra.
+
+### Három dolog, ami menet közben derült ki
+
+**A VM IP-je minden újraindításkor más.** Négy cím négy indítás alatt. A megoldás nem
+az `.env` frissítgetése, hanem a `infra.mshome.net` név — a Hyper-V DNS-e feloldja és
+követi a változást. Az `.env`-ben ezért `VM_HOST` lett a mérvadó, a `VM_IP` csak
+tájékoztató.
+
+**A Compose átörökíti a névtelen volume-okat.** A `redis` image `VOLUME /data`-t
+deklarál, ezért keletkezett egy névtelen volume. Utólag hozzáadtam a `tmpfs: /data`-t,
+de a régi volume **ott maradt a konténeren** — a `tmpfs` csak fölé mountolódott, és a
+`docker volume prune` sem vitte el, mert használatban volt. `docker compose rm -sfv redis`
+kellett hozzá. Az Ansible-nek tudnia kell erről, különben a gépeken csendben gyűlnek a
+volume-ok.
+
+**A `-hex` nem stílus kérdése a jelszógenerálásnál.** Az `openssl rand -base64`
+kimenetében `/`, `+` és `=` is van; ezek elszállnak a `psql` string-literáljában és a
+compose `${...}` interpolációjában is.
