@@ -13,10 +13,10 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1–7. lépése** is. **Az Airflow fut**: négy komponens LocalExecutorral, mind healthy,
-és egy valódi DAG végig is futott rajta. A jegyzet a
-[manual-install.md](manual-install.md)-ben gyűlik. Következő: az **1. fázis 8. lépése**,
-az observability (Prometheus, exporterek, Grafana).
+1–8. lépése** is. **13 szolgáltatás fut**: Postgres, Redis, Airflow ×4, és a teljes
+observability (Prometheus, Grafana, node-exporter, cAdvisor, 3 exporter). 6/6
+Prometheus target UP. A jegyzet a [manual-install.md](manual-install.md)-ben gyűlik.
+Következő: az **1. fázis 9. lépése**, a Jupyter — utána a `api` (FastAPI), és kész a fázis.
 
 **Mi van kész:**
 
@@ -27,7 +27,8 @@ az observability (Prometheus, exporterek, Grafana).
 | `docs/WORKLOG.md` | ez a fájl |
 | `docs/manual-install.md` | **az 1. fázis terméke** — minden működő parancs, indoklással |
 | `app/Dockerfile`, `app/requirements.txt` | a közös `app` image — mérve, nem tippelve |
-| `stack/docker-compose.yml` | a működő stack: Postgres, Redis, Airflow ×4 |
+| `stack/docker-compose.yml` | a működő stack: 13 szolgáltatás |
+| `stack/prometheus/`, `stack/grafana/` | scrape-konfig, statsd mapping (19 szabály), Grafana adatforrás |
 | `tests/smoke_test_dag.py` | füst-teszt: valódi DAG-futás, könyvtárak + DB-kapcsolat |
 | `scripts/setup-dev.sh` | interaktív wizard a 0.2–0.4 lépésekhez (idempotens, újrafuttatható) |
 | `.gitattributes` | `* text=auto eol=lf` — az első commit óta, ez nem véletlen |
@@ -46,14 +47,15 @@ az observability (Prometheus, exporterek, Grafana).
 | A stack | `/opt/stack` — `postgres:16` (`airflow` + `app` DB) és `redis:7.2`, mindkettő `127.0.0.1`-en |
 | `app` image | `initinfra/app:dev`, 4.61 GB — Airflow 3.3.1 + torch 2.9.0+**cpu** + a modellkód függőségei |
 | Airflow | 4 komponens (`apiserver`, `scheduler`, `dag-processor`, `triggerer`), LocalExecutor, `127.0.0.1:8080` |
+| Observability | Prometheus `:9090`, Grafana `:3000`, node/cadvisor/postgres/redis/statsd exporterek — 6/6 target UP |
 | Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — stabil név; az IP minden újraindításkor változik |
 | Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
 | `.env` | `VM_NAME`, `VM_HOST`, `VM_IP`, `GH_OWNER` — **gitignore-olt** |
 
 **Mi a következő teendő:**
 
-Az **1. fázis 8–9. lépése**: observability (Prometheus, exporterek, Grafana) és
-Jupyter. Minden működő parancs megy a
+Az **1. fázis 9. lépése**: a Jupyter. Utána már csak az `api` (FastAPI) konténer
+hiányzik a 15-ből, és a fázis kész. Minden működő parancs megy a
 `manual-install.md`-be — az adja a 2. fázis Ansible-jének a bemenetét.
 
 A 4–5. lépés három újraindítást is kiállt: a Postgres adata megmaradt (named volume),
@@ -277,3 +279,54 @@ OOM killer a legnagyobb folyamatot (a tréninget) lövi ki, nem a schedulert.
 A compose csak az `AIRFLOW__*` változókat adta át a konténereknek, így **a DAG-ok
 sehogy nem érték volna el a Postgrest**. Enélkül a stack „működőnek" látszott volna,
 és az első valódi DAG-nál derült volna ki. Ezért ér a füst-teszt annyit, amennyit.
+
+---
+
+## 2026-08-23 (2) — Observability (1. fázis, 8. lépés)
+
+### Mi történt
+
+Hét új konténer: Prometheus, Grafana, node-exporter, cAdvisor és három exporter.
+**6/6 Prometheus target UP**, a Grafana egyetlen adatforrása a Prometheus, minden
+admin port loopbackre kötve. Újraindítás után 13/13 service és 6/6 target visszajött
+30 másodperc alatt.
+
+### A tervben volt egy hibás verzió
+
+A hét pinnelt image közül **egy tag nem létezett**: a cAdvisor `v0.60.5` a
+`gcr.io/cadvisor/cadvisor` alatt. A projekt átköltözött a `ghcr.io/google/cadvisor`
+alá, ahol `v0.57.0` a legfrissebb. A DESIGN javítva. A tanulság: a pinnelt tageket
+`docker manifest inspect`-tel érdemes ellenőrizni, mielőtt a telepítő nekifut.
+
+### A statsd mapping volt az érdemi munka
+
+Az Airflow a `dag_id`-t és a `task_id`-t a metrika **nevébe** ágyazza. Mapping nélkül
+minden DAG/task/állapot kombináció külön metrikanevet szül — Prometheusban
+kezelhetetlen. Négy buktató, mind méréssel derült ki:
+
+1. A glob `*` csak **teljes** pont-szegmenst fog meg; szegmensen belüli jokerhez
+   `match_type: regex` kell, különben a statsd-exporter **el sem indul**.
+2. A regexet YAML-ben **aposztróffal** kell írni — dupla idézőjelben a `\.`
+   érvénytelen escape.
+3. A DAG-fájlnév `.py` kiterjesztése extra pont-szegmenst csinál, amit a glob nem visz át.
+4. A kimeneti névből **nem lehet visszafejteni a nyerset** (a pontból is aláhúzás lesz),
+   ezért `last_run.seconds_ago` és `last_run_seconds_ago` alakra is kellett szabály.
+
+Ezért került a végére egy általános szabály, ami a jövőbeli
+`airflow.dag.<dag>.<task>.<bármi>`-t is elkapja. Végeredmény: 78 `airflow_*`
+metrikanév, **nulla beégetett azonosítóval**.
+
+**Az ellenőrzés módja is tanulság**: a Prometheus a régi sorozatneveket a retention
+idejéig megőrzi, tehát ott a javítás után is látszottak volna. Közvetlenül az
+exportert kellett kérdezni.
+
+### A publish_web_ui élesben is bizonyítva
+
+A Grafanán próbáltuk ki: publikálva, `DOCKER-USER` szabály nélkül **a világ felé
+nyitva** (HTTP 200); a szabállyal az engedélyezett IP-ről 200, másról blokkolva.
+Az `ufw` egyik esetben sem segített.
+
+Közben kiderült, hogy **a Hyper-V alhálózat a gazdagép újraindításakor újraosztódik**:
+a `172.31.192.1` egyszer csak `172.25.144.1` lett, és a szabály némán mindent
+blokkolni kezdett. Éles gépen ez nem probléma (ott fix ügyfél-IP van), de a hibakép
+tanulságos: egy rossz IP a szabályban **timeoutként** jelentkezik, nem hibaüzenetként.

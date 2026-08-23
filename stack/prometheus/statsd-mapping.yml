@@ -1,0 +1,137 @@
+# Az Airflow statsd-metrikai a nevbe agyazzak a dag_id-t es a task_id-t, pl.
+#   airflow.ti.finish.napi_betoltes.kicsomagolas.success
+# Mapping nelkul ebbol MINDEN dag/task/allapot kombinaciora kulon metrikanev
+# lenne - Prometheusban ez kezelhetetlen. A mapping ezeket cimkekke alakitja,
+# igy egy metrika lesz belole, dag_id/task_id/state cimkekkel.
+mappings:
+  - match: "airflow.dagrun.duration.success.*"
+    name: "airflow_dagrun_duration_success_seconds"
+    labels:
+      dag_id: "$1"
+
+  - match: "airflow.dagrun.duration.failed.*"
+    name: "airflow_dagrun_duration_failed_seconds"
+    labels:
+      dag_id: "$1"
+
+  - match: "airflow.ti.finish.*.*.*"
+    name: "airflow_task_instance_finished"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+      state: "$3"
+
+  - match: "airflow.ti.start.*.*"
+    name: "airflow_task_instance_started"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+
+  - match: "airflow.pool.open_slots.*"
+    name: "airflow_pool_open_slots"
+    labels:
+      pool: "$1"
+
+  - match: "airflow.pool.running_slots.*"
+    name: "airflow_pool_running_slots"
+    labels:
+      pool: "$1"
+
+  # A DAG-fajlok feldolgozasi ideje: a FAJLNEV agyazodik a nevbe.
+  # Enelkul minden uj DAG-fajl uj metrikanevet gyartana.
+  # A DAG-fajl neveben ott a ".py" - az extra pont-szegmenst csinal, es a glob
+  # "*" csak EGY szegmenst fog meg. Ezert regex, ami ativel a pontokon.
+  - match: 'airflow\.dag_processing\.last_duration\.(.+)'
+    match_type: regex
+    name: "airflow_dag_processing_last_duration"
+    labels:
+      dag_file: "$1"
+
+  - match: "airflow.dag.loading-duration.*"
+    name: "airflow_dag_loading_duration"
+    labels:
+      dag_file: "$1"
+
+  # Task-idotartam: airflow.dag.<dag_id>.<task_id>.duration
+  - match: "airflow.dag.*.*.duration"
+    name: "airflow_task_duration"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+
+  - match: "airflow.dagrun.schedule_delay.*"
+    name: "airflow_dagrun_schedule_delay"
+    labels:
+      dag_id: "$1"
+
+  - match: "airflow.dagrun.*.first_task_scheduling_delay"
+    name: "airflow_dagrun_first_task_scheduling_delay"
+    labels:
+      dag_id: "$1"
+
+  # FIGYELEM: a glob-illeszto csak TELJES, pontokkal hatarolt szegmensre enged
+  # "*"-ot. Az "operator_failures_*" szegmensen BELULI joker, ezert regex kell.
+  # A mintat APOSZTROFFAL kell irni: dupla idezojelben a YAML a \. -ot
+  # ervenytelen escape-nek veszi, es a config betoltese elszall.
+  - match: 'airflow\.operator_failures_(.+)'
+    match_type: regex
+    name: "airflow_operator_failures"
+    labels:
+      operator: "$1"
+
+  - match: 'airflow\.operator_successes_(.+)'
+    match_type: regex
+    name: "airflow_operator_successes"
+    labels:
+      operator: "$1"
+
+  - match: 'airflow\.dag_processing\.last_run_seconds_ago\.(.+)'
+    match_type: regex
+    name: "airflow_dag_processing_last_run_seconds_ago"
+    labels:
+      dag_file: "$1"
+
+  - match: "airflow.dagrun.dependency-check.*"
+    name: "airflow_dagrun_dependency_check"
+    labels:
+      dag_id: "$1"
+
+  # ALTALANOS szabaly a task-szintu metrikakra. A fenti, konkretabb szabalyok
+  # utan all, mert az elso talalat nyer. Ez fogja meg a scheduled_duration-t,
+  # a queued_duration-t es minden jovobeli airflow.dag.<dag>.<task>.<valami>-t,
+  # amire kulon nem gondoltunk - igy nem egnek be uj nevek a metrikakba.
+  - match: "airflow.dag.*.*.*"
+    name: "airflow_dag_task_${3}"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+
+  # airflow.ti.running.<pool>.<dag_id>.<task_id>
+  - match: 'airflow\.ti\.running\.([^.]+)\.([^.]+)\.(.+)'
+    match_type: regex
+    name: "airflow_ti_running"
+    labels:
+      pool: "$1"
+      dag_id: "$2"
+      task_id: "$3"
+
+  - match: 'airflow\.ti\.queued\.([^.]+)\.([^.]+)\.(.+)'
+    match_type: regex
+    name: "airflow_ti_queued"
+    labels:
+      pool: "$1"
+      dag_id: "$2"
+      task_id: "$3"
+
+  # Ugyanez, de a nyers nevben "last_run.seconds_ago" all - PONTTAL, nem
+  # alahuzassal. A kimeneti nevbol ez nem latszik (a pontbol is alahuzas lesz),
+  # ezert kellett mindket alakra szabaly.
+  - match: 'airflow\.dag_processing\.last_run\.seconds_ago\.(.+)'
+    match_type: regex
+    name: "airflow_dag_processing_last_run_seconds_ago"
+    labels:
+      dag_file: "$1"
+
+  # Minden mas atmegy valtozatlanul: a statsd-exporter alapertelmezese szerint
+  # a pontokbol alahuzas lesz (airflow.scheduler.heartbeat -> airflow_scheduler_heartbeat).
+  # Nincs "drop" szabaly - amit nem ismerunk, azt is latni akarjuk.

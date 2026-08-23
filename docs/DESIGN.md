@@ -82,7 +82,7 @@ időzóna). Se Python, se venv, se alkalmazás-szintű systemd unit nincs a gép
 | `prometheus` | `prom/prometheus:v3.5.5` | 9090 | Metrika-gyűjtés |
 | `grafana` | `grafana/grafana:13.1.4` | 3000 | Vizualizáció |
 | `node-exporter` | `prom/node-exporter:v1.12.1` | 9100 | Gép CPU/RAM/disk |
-| `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.60.5` | 8081 | Konténerenkénti erőforrás-használat |
+| `cadvisor` | `ghcr.io/google/cadvisor:v0.57.0` | 8081 | Konténerenkénti erőforrás-használat |
 | `postgres-exporter` | `prometheuscommunity/postgres-exporter:v0.20.1` | 9187 | Adatbázis-metrikák |
 | `redis-exporter` | `oliver006/redis_exporter:v1.89.0` | 9121 | Redis-metrikák |
 | `statsd-exporter` | `prom/statsd-exporter:v0.29.0` | 9102 | Airflow DAG-metrikák |
@@ -317,7 +317,7 @@ Minden pinnelve, `latest` sehol. Ellenőrizve 2026-08-20-án.
 | Prometheus | v3.5.5 | LTS ág; a legújabb v3.14.0 |
 | Grafana | 13.1.4 | |
 | node-exporter | v1.12.1 | |
-| cAdvisor | v0.60.5 | A 8080 ütközne az Airflow-val, ezért 8081-en |
+| cAdvisor | v0.57.0 | **`ghcr.io`, nem `gcr.io`** — a projekt regisztrátumot váltott. A 8080 ütközne az Airflow-val, ezért kifelé 8081-en |
 | postgres-exporter | v0.20.1 | |
 | redis-exporter | v1.89.0 | |
 | statsd-exporter | v0.29.0 | Az Airflow metrikáihoz |
@@ -593,3 +593,11 @@ igényel: `--ctorigdstport` (a `DOCKER-USER` a DNAT után fut, ott már a konté
 portja látszik) és `--ctdir ORIGINAL` (enélkül a konténer válaszát is eldobja, és a
 tünet megtévesztő: az `ACCEPT` számlálója nő, a kapcsolat mégsem jön létre). Mindkettő
 ellenőrizve, újraindítás után is.
+
+**2026-08-23 — a cAdvisor verziója és regisztrátuma javítva.** Az 5. szakasz
+`v0.60.5`-öt írt a `gcr.io/cadvisor/cadvisor` alatt. A telepítéskor kiderült, hogy
+**ez a verzió sehol nem létezik**: a `gcr.io` alatt a legfrissebb `v0.52.1`, a projekt
+ugyanis átköltözött a `ghcr.io/google/cadvisor` alá, ahol `v0.57.0` a legújabb. A
+tanulság nem a konkrét szám, hanem hogy a pinnelt tageket **a telepítés előtt is
+érdemes `docker manifest inspect`-tel ellenőrizni** — a hét image közül ez az egy volt
+hibás, és csak a próbán derült ki.

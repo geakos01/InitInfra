@@ -663,9 +663,131 @@ További ellenőrzések:
 
 ---
 
+## 8. Observability
+
+Hét új konténer: Prometheus, Grafana, node-exporter, cAdvisor, és három exporter
+(Postgres, Redis, statsd). Konfigurációk: [`stack/prometheus/`](../stack/prometheus/),
+[`stack/grafana/`](../stack/grafana/).
+
+### 8.1 Egy hibás verzió a tervben
+
+A hét image közül **egy tag nem létezett**: a DESIGN `cAdvisor v0.60.5`-öt írt a
+`gcr.io/cadvisor/cadvisor` alatt. A valóság: a projekt átköltözött a
+**`ghcr.io/google/cadvisor`** alá, ahol a legfrissebb **`v0.57.0`**; a régi
+regisztrátumban `v0.52.1` a legújabb.
+
+```bash
+# Erdemes MINDEN pinnelt taget igy ellenorizni telepites elott
+docker manifest inspect ghcr.io/google/cadvisor:v0.57.0
+```
+
+### 8.2 Az egyetlen push-út
+
+Minden metrikát a Prometheus **húz**. Egyetlen kivétel az Airflow, ami nem tud
+Prometheus-végpontot adni: statsd-n **tol** UDP 9125-re, és a statsd-exporter
+fordítja Prometheus-formára a 9102-n.
+
+```yaml
+    AIRFLOW__METRICS__STATSD_ON: 'true'
+    AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+    AIRFLOW__METRICS__STATSD_PORT: '9125'
+    AIRFLOW__METRICS__STATSD_PREFIX: airflow
+```
+
+### 8.3 A statsd mapping — ez volt a lépés érdemi munkája
+
+Az Airflow a **dag_id-t és a task_id-t a metrika NEVÉBE ágyazza**:
+
+```
+airflow.ti.finish.napi_betoltes.kicsomagolas.success
+airflow.dag.napi_betoltes.kicsomagolas.scheduled_duration
+airflow.dag_processing.last_duration.dags-folder/smoke_test_dag.py
+```
+
+Mapping nélkül minden DAG/task/állapot kombinációra **külön metrikanév** keletkezik.
+Ez Prometheusban kezelhetetlen: nem lehet aggregálni, és minden új DAG új neveket szül.
+A mapping ezeket címkékké alakítja — a végeredmény
+[`stack/prometheus/statsd-mapping.yml`](../stack/prometheus/statsd-mapping.yml), 19 szabállyal.
+
+Négy buktató, mind méréssel derült ki:
+
+> **(a) A glob `*` csak TELJES, pontokkal határolt szegmenst fog meg.** Az
+> `airflow.operator_failures_*` szegmensen belüli joker — a statsd-exporter
+> `invalid match` hibával **el sem indul**. Ilyenkor `match_type: regex` kell.
+
+> **(b) A regexet YAML-ben APOSZTRÓFFAL kell írni.** Dupla idézőjelben a `\.` érvénytelen
+> escape, és a config betöltése elszáll: `found unknown escape character`.
+
+> **(c) A `.py` kiterjesztés extra pont-szegmenst csinál.** A
+> `airflow.dag_processing.last_duration.*` glob ezért **nem** fogja meg a
+> `...last_duration.dags-folder/smoke_test_dag.py` nevet — regex kell, ami átível a
+> pontokon.
+
+> **(d) A kimeneti névből nem lehet visszafejteni a nyerset.** A statsd-exporter a
+> pontokból is aláhúzást csinál, így az `airflow_dag_processing_last_run_seconds_ago_X`
+> névről nem látszik, hogy a forrás `last_run.seconds_ago.X` volt-e vagy
+> `last_run_seconds_ago.X`. Mindkét alakra kellett szabály.
+
+Ezért van egy **általános szabály** is a végén, ami minden jövőbeli
+`airflow.dag.<dag>.<task>.<bármi>`-t elkap — hogy ne kelljen minden új Airflow-verziónál
+újra vadászni.
+
+**Az ellenőrzés módja számít:** a Prometheus a régi sorozatneveket a retention idejéig
+megőrzi, tehát ott a javítás után is látszanának. Közvetlenül az exportert kell kérdezni:
+
+```bash
+docker compose exec -T prometheus wget -qO- http://statsd-exporter:9102/metrics   | grep -E "^airflow_" | sed "s/[{ ].*//" | sort -u
+```
+
+Végeredmény: **78 `airflow_*` metrikanév, nulla beégetett azonosítóval.**
+
+### 8.4 A `publish_web_ui` élesben
+
+A Grafanán próbáltuk ki, mert ez az egyetlen felület, amit publikálni akarhatsz:
+
+| Beállítás | Kívülről |
+|---|---|
+| `0.0.0.0:3000`, `DOCKER-USER` szabály **nélkül** | **HTTP 200 — a világ felé nyitva** |
+| `0.0.0.0:3000` + `DOCKER-USER` az engedélyezett IP-vel | HTTP 200 ✅ |
+| `0.0.0.0:3000` + `DOCKER-USER` **más** IP-vel | blokkolva ✅ |
+| `127.0.0.1:3000` (az alapértelmezés) | zárva ✅ |
+
+Az `ufw` egyik esetben sem segített — pontosan ahogy a 4. szakasz leírja.
+
+> **A Hyper-V alhálózat a gazdagép újraindításakor újraosztódik.** Az `allowed_ips`-ba
+> írt `172.31.192.1` egyszer csak `172.25.144.1` lett, és a szabály némán elkezdett
+> mindent blokkolni. Fejlesztői környezetben ez bosszantó; **éles gépen viszont ez a
+> normális működés** — ott az ügyfél fix IP-je szerepel. A tanulság inkább az, hogy egy
+> IP-alapú szabály hibája **timeoutként** jelentkezik, nem hibaüzenetként, tehát nehéz
+> diagnosztizálni.
+
+### 8.5 Ellenőrzés
+
+```bash
+curl -s "http://127.0.0.1:9090/api/v1/targets?state=any"   # 6/6 up
+curl -s -u admin:... http://127.0.0.1:3000/api/datasources # Prometheus, default
+```
+
+| | |
+|---|---|
+| Prometheus targetek | **6/6 UP** (node, cadvisor, postgres, redis, airflow, prometheus) |
+| `node_memory_MemAvailable_bytes` | 5,97 GB |
+| `count(container_last_seen)` | 14 konténer |
+| `pg_up` / `redis_up` | 1 / 1 |
+| Grafana adatforrás | Prometheus, `isDefault`, `editable: false` |
+| Újraindítás után | 13/13 service, **6/6 target UP**, 30 mp |
+
+> **Három exporternek nincs healthcheckje** (`node-exporter`, `postgres-exporter`,
+> `redis-exporter`) — az image-ekben nincs `wget`/`curl`. A `docker compose ps` ezért
+> csak `Up`-ot mutat náluk, nem `healthy`-t. A tényleges egészségüket a Prometheus
+> target-állapota mutatja, ami megbízhatóbb is. A 2. fázisban a verify lépés ezt
+> nézze, ne a konténer-státuszt.
+
+---
+
 ## Amit az újraindítás-próbák igazoltak
 
-Négy teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
+Öt teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
 
 | | |
 |---|---|
@@ -686,8 +808,9 @@ docker:      29.7.2          compose: v5.5.0
 szolgáltatások:
   postgres   healthy   127.0.0.1:5432
   redis      healthy   127.0.0.1:6379
-szolgáltatások: postgres, redis, airflow-{apiserver,scheduler,dag-processor,triggerer}
-             mind healthy, admin portok 127.0.0.1-en
+szolgáltatások: 13 db - postgres, redis, airflow x4, prometheus, grafana,
+             node-exporter, cadvisor, postgres/redis/statsd-exporter
+             minden admin port 127.0.0.1-en
 image-ek:    initinfra/app:dev (4.61GB), postgres:16, redis:7.2
 volume-ok:   initinfra_postgres-data   (és semmi más)
 ufw:         active    (csak 22/tcp)
@@ -720,5 +843,5 @@ DOCKER-USER: üres
 - [x] 5. Redis
 - [x] 6. Az `app` image: `FROM apache/airflow:3.3.1-python3.12`
 - [x] 7. Airflow négy komponense, LocalExecutorral
-- [ ] 8. Prometheus, exporterek, Grafana
+- [x] 8. Prometheus, exporterek, Grafana
 - [ ] 9. Jupyter
