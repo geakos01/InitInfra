@@ -13,9 +13,10 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1–6. lépése** is: rendszerfrissítés, Docker, gép-higiénia, **Postgres, Redis**, és az
-**`app` image**. A jegyzet a [manual-install.md](manual-install.md)-ben gyűlik.
-Következő: az **1. fázis 7. lépése**, az Airflow négy komponense LocalExecutorral.
+1–7. lépése** is. **Az Airflow fut**: négy komponens LocalExecutorral, mind healthy,
+és egy valódi DAG végig is futott rajta. A jegyzet a
+[manual-install.md](manual-install.md)-ben gyűlik. Következő: az **1. fázis 8. lépése**,
+az observability (Prometheus, exporterek, Grafana).
 
 **Mi van kész:**
 
@@ -26,6 +27,8 @@ Következő: az **1. fázis 7. lépése**, az Airflow négy komponense LocalExec
 | `docs/WORKLOG.md` | ez a fájl |
 | `docs/manual-install.md` | **az 1. fázis terméke** — minden működő parancs, indoklással |
 | `app/Dockerfile`, `app/requirements.txt` | a közös `app` image — mérve, nem tippelve |
+| `stack/docker-compose.yml` | a működő stack: Postgres, Redis, Airflow ×4 |
+| `tests/smoke_test_dag.py` | füst-teszt: valódi DAG-futás, könyvtárak + DB-kapcsolat |
 | `scripts/setup-dev.sh` | interaktív wizard a 0.2–0.4 lépésekhez (idempotens, újrafuttatható) |
 | `.gitattributes` | `* text=auto eol=lf` — az első commit óta, ez nem véletlen |
 | `.claude/settings.json` | 5 read-only parancs engedélylistája |
@@ -42,14 +45,15 @@ Következő: az **1. fázis 7. lépése**, az Airflow négy komponense LocalExec
 | A VM-en | Docker 29.7.2 + Compose v5.5.0, ufw (csak 22), fail2ban, 4G swap, Europe/Budapest |
 | A stack | `/opt/stack` — `postgres:16` (`airflow` + `app` DB) és `redis:7.2`, mindkettő `127.0.0.1`-en |
 | `app` image | `initinfra/app:dev`, 4.61 GB — Airflow 3.3.1 + torch 2.9.0+**cpu** + a modellkód függőségei |
+| Airflow | 4 komponens (`apiserver`, `scheduler`, `dag-processor`, `triggerer`), LocalExecutor, `127.0.0.1:8080` |
 | Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — stabil név; az IP minden újraindításkor változik |
 | Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
 | `.env` | `VM_NAME`, `VM_HOST`, `VM_IP`, `GH_OWNER` — **gitignore-olt** |
 
 **Mi a következő teendő:**
 
-Az **1. fázis 7–9. lépése**: az Airflow négy komponense LocalExecutorral,
-observability, Jupyter. Minden működő parancs megy a
+Az **1. fázis 8–9. lépése**: observability (Prometheus, exporterek, Grafana) és
+Jupyter. Minden működő parancs megy a
 `manual-install.md`-be — az adja a 2. fázis Ansible-jének a bemenetét.
 
 A 4–5. lépés három újraindítást is kiállt: a Postgres adata megmaradt (named volume),
@@ -223,3 +227,53 @@ volume-ok.
 **A `-hex` nem stílus kérdése a jelszógenerálásnál.** Az `openssl rand -base64`
 kimenetében `/`, `+` és `=` is van; ezek elszállnak a `psql` string-literáljában és a
 compose `${...}` interpolációjában is.
+
+---
+
+## 2026-08-23 — Az `app` image és az Airflow (1. fázis, 6–7. lépés)
+
+### Mi történt
+
+Megépült a közös `app` image, és **fut az Airflow**: négy komponens LocalExecutorral,
+mind `healthy`, és egy valódi DAG végig is futott rajta — nem `airflow dags test`-tel,
+ami megkerülné az executort, hanem igazi triggerrel.
+
+A füst-teszt kimenete a task logjából:
+
+```
+KONYVTARAK: torch 2.9.0+cpu (cuda: False), pandas 2.3.2, numpy 2.3.3, sklearn 1.7.2
+ADATBAZIS:  PostgreSQL 16.15      <- a task sajat maga csatlakozott
+MINDEN RENDBEN
+```
+
+Ez azt bizonyítja, ami a terv lényege: **egyetlen image szolgálja ki az Airflow-t és a
+modellkódot**, és a taskok elérik az alkalmazás adatbázisát.
+
+### A függőség-kérdés, amit méréssel döntöttünk el
+
+Az alap image pandas **3.0.5**-öt hoz, a modellkód **2.3.x**-re íródott. A pandas 3.0
+major váltás, tehát ez nem apróság volt. A PyPI `requires_dist`-je adta meg a választ:
+**az `apache-airflow-core` 3.3.1 nem függ a pandastól** — csak opcionális extraként
+szerepel. A visszaléptetés után az `airflow version`, a `providers list` és a
+`pip check` is hibátlan.
+
+Amit viszont **nem** másoltunk át a fejlesztői venv-ből: az `sqlalchemy 2.0.43`. Az
+Airflow minimuma `>= 2.0.50`, tehát a lokális verzió a küszöb alatt van.
+
+### Executor: maradt a LocalExecutor
+
+Felmerült a CeleryExecutor. A tisztázás során kiderült, hogy a valódi akadály nem az,
+hogy „az Airflow nem használ Redist" (ma valóban nem) — hanem hogy **a Celery maga
+tenné azzá**: a broker a Redis. És mivel a `maxmemory-policy` instance-szintű, a
+meglévő, `allkeys-lru`-s Redis brokerként **csendben eldobhatna task-üzeneteket**.
+Külön broker Redis kellene hozzá.
+
+A döntés a kevesebb mozgó alkatrész mellett szólt: a telepítőnek ügyfélnél,
+felügyelet nélkül kell működnie. A tréning OOM-kockázatát `mem_limit` fedi — a cgroup
+OOM killer a legnagyobb folyamatot (a tréninget) lövi ki, nem a schedulert.
+
+### Amit a füst-teszt buktatott ki
+
+A compose csak az `AIRFLOW__*` változókat adta át a konténereknek, így **a DAG-ok
+sehogy nem érték volna el a Postgrest**. Enélkül a stack „működőnek" látszott volna,
+és az első valódi DAG-nál derült volna ki. Ezért ér a füst-teszt annyit, amennyit.

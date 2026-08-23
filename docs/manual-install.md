@@ -544,9 +544,128 @@ pydantic 2.13.4   websockets 16.1.1  APScheduler 3.11.3
 
 ---
 
+## 7. Az Airflow négy komponense (LocalExecutor)
+
+Kiindulás a hivatalos compose fájl, de három dolog kikerül belőle:
+
+```bash
+curl -O https://airflow.apache.org/docs/apache-airflow/3.3.1/docker-compose.yaml
+```
+
+| Amit a hivatalos ad | Nálunk |
+|---|---|
+| `CeleryExecutor` | **`LocalExecutor`** |
+| `airflow-worker`, `flower` | **kimarad** — Celery-specifikusak |
+| `redis` mint **broker** | a mi Redisünk az **alkalmazásé**; az Airflow nem is látja |
+
+A kész fájl: [`stack/docker-compose.yml`](../stack/docker-compose.yml).
+
+### 7.1 Miért LocalExecutor
+
+Egy gép, egy ügyfél — a Celery horizontális skálázása itt nem hasznosul, cserébe
+két konténert és egy broker-függőséget hozna a telepítőbe.
+
+> **Ha valaha Celeryre váltanál: külön broker Redis kell.** A meglévő Redis
+> `maxmemory-policy allkeys-lru`-val fut (session cache, eldobható). A
+> `maxmemory-policy` viszont **instance-szintű, nem adatbázis-szintű** — hiába
+> tennéd a Celeryt `SELECT 1`-be, memórianyomás alatt a Redis kidobhatna egy
+> task-üzenetet, és a task csendben elveszne. A Celery brokernek `noeviction` kell.
+
+A tréning OOM-kockázatát `mem_limit` fedi a scheduleren: a taskok a scheduler
+gyerekfolyamatai, és a cgroup OOM killer a legnagyobb folyamatot lövi ki — azaz a
+tréninget, nem a schedulert.
+
+### 7.2 A titkok
+
+```bash
+# Fernet kulcs az image sajat cryptography-javal, nem tippelt formatummal
+docker run --rm initinfra/app:dev python -c   "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+openssl rand -hex 32   # AIRFLOW_JWT_SECRET
+openssl rand -hex 12   # admin jelszo
+```
+
+> **A `AIRFLOW__API_AUTH__JWT_SECRET` alapértelmezése a hivatalos fájlban
+> `airflow_jwt_secret`.** Ezt kötelező felülírni — enélkül bárki, aki ismeri a
+> defaultot, érvényes tokent tud gyártani.
+
+### 7.3 A DB migráció és az admin user
+
+Nem kézzel futtatjuk az `airflow db migrate`-et. Az image entrypointja kezeli a
+`_AIRFLOW_DB_MIGRATE` és `_AIRFLOW_WWW_USER_CREATE` változókat — ezért hívja az
+`airflow-init` explicit a `/entrypoint airflow version`-t. A többi service
+`depends_on: airflow-init: condition: service_completed_successfully`.
+
+```bash
+cd /opt/stack
+docker compose up airflow-init     # egyszer fut le, exit 0
+docker compose up -d
+```
+
+### 7.4 A modellkód kapcsolati adatai
+
+Ez elsőre kimaradt, és a füst-teszt buktatta ki: a compose csak az `AIRFLOW__*`
+változókat adta át, így **a DAG-ok sehogy nem érték volna el a Postgrest**. Az
+`x-airflow-common` környezetébe fel kell venni:
+
+```yaml
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: '5432'
+    POSTGRES_APP_DB: ${POSTGRES_APP_DB}
+    POSTGRES_APP_USER: ${POSTGRES_APP_USER}
+    POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    REDIS_HOST: redis
+    REDIS_PORT: '6379'
+```
+
+### 7.5 Ellenőrzés
+
+Nem elég, hogy „fut". A [`tests/smoke_test_dag.py`](../tests/smoke_test_dag.py)
+végigfuttat egy valódi DAG-ot — nem `airflow dags test`-tel, mert az megkerülné az
+executort, hanem igazi triggerrel a scheduleren keresztül.
+
+```bash
+cp tests/smoke_test_dag.py /opt/app/dags/
+docker compose exec -T airflow-scheduler airflow dags unpause initinfra_smoke_test
+docker compose exec -T airflow-scheduler airflow dags trigger initinfra_smoke_test --run-id proba-1
+```
+
+Az eredmény a task logjában:
+
+```
+KONYVTARAK: torch 2.9.0+cpu (cuda: False), pandas 2.3.2, numpy 2.3.3, sklearn 1.7.2
+ADATBAZIS:  PostgreSQL 16.15      <- a task sajat maga csatlakozott
+MINDEN RENDBEN
+```
+
+Amit ez bizonyít: a task-végrehajtás működik (Task Execution API), a modellkönyvtárak
+elérhetők a **task** környezetében (nem csak a shellben), és a task eléri az
+alkalmazás adatbázisát.
+
+További ellenőrzések:
+
+| | |
+|---|---|
+| `/api/v2/monitor/health` | mind a 4 komponens `healthy` |
+| `airflow config get-value core executor` | `LocalExecutor` |
+| `airflow dags list` | csak a saját DAG — nincsenek példák |
+| `/api/v2/dags` hitelesítés nélkül | **401** |
+| Bejelentkezés `/auth/token`-nel | JWT megjön, a DAG listázható |
+| 8080 kívülről | **zárva** |
+
+> **Két CLI-buktató.** Az `airflow dags list-runs -d <dag>` a 3.3-ban súgót ír ki
+> (a `-d` nem az, ami a 2.x-ben volt) — a futás állapotát a `task_instance`
+> táblából érdemes nézni. És a `docker compose exec ... pip` az Airflow-nak adja
+> tovább a parancsot; `python -m pip` kell.
+
+**Újraindítás-próba:** mind a 6 service magától visszajött, **20 mp alatt healthy**,
+és a korábbi futás 3 sikeres task-példánya megmaradt a DB-ben.
+
+---
+
 ## Amit az újraindítás-próbák igazoltak
 
-Három teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
+Négy teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
 
 | | |
 |---|---|
@@ -567,6 +686,8 @@ docker:      29.7.2          compose: v5.5.0
 szolgáltatások:
   postgres   healthy   127.0.0.1:5432
   redis      healthy   127.0.0.1:6379
+szolgáltatások: postgres, redis, airflow-{apiserver,scheduler,dag-processor,triggerer}
+             mind healthy, admin portok 127.0.0.1-en
 image-ek:    initinfra/app:dev (4.61GB), postgres:16, redis:7.2
 volume-ok:   initinfra_postgres-data   (és semmi más)
 ufw:         active    (csak 22/tcp)
@@ -598,6 +719,6 @@ DOCKER-USER: üres
 - [x] 4. Minimális `docker-compose.yml` Postgresszel
 - [x] 5. Redis
 - [x] 6. Az `app` image: `FROM apache/airflow:3.3.1-python3.12`
-- [ ] 7. Airflow négy komponense, LocalExecutorral
+- [x] 7. Airflow négy komponense, LocalExecutorral
 - [ ] 8. Prometheus, exporterek, Grafana
 - [ ] 9. Jupyter
