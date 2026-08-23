@@ -13,10 +13,10 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1–8. lépése** is. **13 szolgáltatás fut**: Postgres, Redis, Airflow ×4, és a teljes
-observability (Prometheus, Grafana, node-exporter, cAdvisor, 3 exporter). 6/6
-Prometheus target UP. A jegyzet a [manual-install.md](manual-install.md)-ben gyűlik.
-Következő: az **1. fázis 9. lépése**, a Jupyter — utána a `api` (FastAPI), és kész a fázis.
+1–9. lépése is kész**. **14 szolgáltatás fut**: Postgres, Redis, Airflow ×4, Jupyter,
+és a teljes observability. 6/6 Prometheus target UP, minden admin port loopbackon.
+A jegyzet a [manual-install.md](manual-install.md)-ben gyűlik.
+Következő: az **`api` (FastAPI) konténer** — az az utolsó a 15-ből, és kész az 1. fázis.
 
 **Mi van kész:**
 
@@ -48,14 +48,15 @@ Következő: az **1. fázis 9. lépése**, a Jupyter — utána a `api` (FastAPI
 | `app` image | `initinfra/app:dev`, 4.61 GB — Airflow 3.3.1 + torch 2.9.0+**cpu** + a modellkód függőségei |
 | Airflow | 4 komponens (`apiserver`, `scheduler`, `dag-processor`, `triggerer`), LocalExecutor, `127.0.0.1:8080` |
 | Observability | Prometheus `:9090`, Grafana `:3000`, node/cadvisor/postgres/redis/statsd exporterek — 6/6 target UP |
+| Jupyter | `127.0.0.1:8888`, tokennel védve, ugyanabból az `app` image-ből; `/opt/app` **csak olvasva** |
 | Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — stabil név; az IP minden újraindításkor változik |
 | Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
 | `.env` | `VM_NAME`, `VM_HOST`, `VM_IP`, `GH_OWNER` — **gitignore-olt** |
 
 **Mi a következő teendő:**
 
-Az **1. fázis 9. lépése**: a Jupyter. Utána már csak az `api` (FastAPI) konténer
-hiányzik a 15-ből, és a fázis kész. Minden működő parancs megy a
+Az **`api` (FastAPI) konténer** — az utolsó a 15-ből. Utána az 1. fázis kész, és
+jöhet a **2. fázis**: az egészet Ansible-szerepkörökre fordítani. Minden működő parancs megy a
 `manual-install.md`-be — az adja a 2. fázis Ansible-jének a bemenetét.
 
 A 4–5. lépés három újraindítást is kiállt: a Postgres adata megmaradt (named volume),
@@ -330,3 +331,42 @@ Közben kiderült, hogy **a Hyper-V alhálózat a gazdagép újraindításakor �
 a `172.31.192.1` egyszer csak `172.25.144.1` lett, és a szabály némán mindent
 blokkolni kezdett. Éles gépen ez nem probléma (ott fix ügyfél-IP van), de a hibakép
 tanulságos: egy rossz IP a szabályban **timeoutként** jelentkezik, nem hibaüzenetként.
+
+---
+
+## 2026-08-23 (3) — Jupyter (1. fázis, 9. lépés)
+
+### Mi történt
+
+A Jupyter ugyanabból az `app` image-ből fut, mint az Airflow. A kernel bizonyítottan
+működik: egy `jupyter execute`-tal futtatott notebook importálta a torch-ot, csatlakozott
+a Postgreshez és a Redishez, nulla hibás cellával.
+
+A `jupyterlab` nem volt az alap image-ben — hozzáadva, feloldott verzió `4.6.3`.
+Az image 4,61 → 4,78 GB.
+
+### A named volume-ok tulajdonos-csapdája — ez kétszer is megfogott
+
+**A Docker csak akkor örökli a tulajdonost az image-ből, ha a könyvtár létezik benne.**
+Ha nem, `root:root`-ként hozza létre, és az UID 50000-es folyamat nem tud beleírni.
+Előbb a `/home/airflow/.jupyter`-rel, majd a `/opt/notebooks`-szal futottunk bele.
+
+A tünet alattomos: **a szerver elindul és `healthy` lesz**, csak a tényleges munka bukik
+el. Ha csak a konténer-státuszt néztük volna, működőnek hittük volna.
+
+Általános szabály lett belőle: minden könyvtárat, amire named volume kerül, **az
+image-ben kell létrehozni** a helyes tulajdonossal.
+
+Kapcsolódó tanulság: a **`/home/airflow`-ra soha nem szabad volume-ot mountolni** —
+a `pip` oda telepít (`.local/lib/python3.12/site-packages`), egy volume eltüntetné a
+torch-ot és minden mást.
+
+### Egy tervezési hiba, amit a hiba javítása helyett a terv javításával oldottunk meg
+
+Elsőre a `/opt/app`-ot írhatóan mountoltam a Jupyterbe, és a notebook-mentés
+`Permission denied`-del elszállt (host UID 1000 vs konténer 50000).
+
+A jogosultság megpiszkálása helyett kiderült, hogy **oda nem is szabad írni**: a
+`/opt/app` git-kezelt, `git pull` frissíti, és bármi, amit a Jupyter odament, ütközne
+a következő pull-lal. Így lett a modellkód **csak olvasható**, a notebookok pedig külön
+named volume-ba kerültek, `PYTHONPATH=/opt/app` mellett.

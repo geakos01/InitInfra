@@ -785,9 +785,115 @@ curl -s -u admin:... http://127.0.0.1:3000/api/datasources # Prometheus, default
 
 ---
 
+## 9. Jupyter
+
+Ugyanabból az `app` image-ből fut, mint az Airflow — a notebookok pontosan azokat a
+könyvtárakat és verziókat látják, mint a DAG-ok. Nincs külön venv, amit karban kellene
+tartani.
+
+### 9.1 A Jupyter nincs benne az alap image-ben
+
+```bash
+docker run --rm initinfra/app:dev python -c "import importlib.util as u; print(u.find_spec('jupyterlab'))"
+# None
+```
+
+Hozzá kell adni a `requirements.txt`-hez. Feloldott verzió: **`jupyterlab==4.6.3`**
+(jupyter-server 2.20.0, ipykernel 7.3.0). A `pip check` utána is tiszta, az Airflow 3.3.1
+sértetlen. Az image 4,61 → **4,78 GB**.
+
+### 9.2 Az entrypointot felül kell írni
+
+```bash
+docker run --rm initinfra/app:dev jupyter --version
+# Usage: airflow [-h] GROUP_OR_COMMAND ...
+```
+
+Az Airflow image entrypointja **minden parancsot az airflow CLI-nek ad tovább**. Ezért:
+
+```yaml
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser
+        --IdentityProvider.token="${JUPYTER_TOKEN}"
+        --ServerApp.root_dir=/opt/notebooks
+```
+
+> A token-kapcsoló a JupyterLab 4-ben `--IdentityProvider.token`, nem a régi
+> `--NotebookApp.token`.
+
+### 9.3 ⚠ A named volume-ok tulajdonos-csapdája
+
+Ez kétszer is megfogott, és általános szabály lett belőle.
+
+**A Docker csak akkor örökli a tulajdonost az image-ből, ha a könyvtár LÉTEZIK benne.**
+Ha nem, `root:root`-ként hozza létre — és az UID 50000-es folyamat nem tud beleírni:
+
+```
+PermissionError: [Errno 13] Permission denied: '/home/airflow/.jupyter/migrated'
+```
+
+A tünet alattomos: a **szerver elindul és `healthy` lesz**, csak a tényleges munka
+(notebook mentése, futtatása) bukik el. A javítás az image-ben van, nem a compose-ban:
+
+```dockerfile
+USER root
+RUN mkdir -p /home/airflow/.jupyter /opt/notebooks  && chown -R 50000:0 /home/airflow/.jupyter /opt/notebooks
+USER airflow
+```
+
+> **A `/home/airflow`-ra SOHA ne mountolj volume-ot.** A `pip` oda telepít
+> (`/home/airflow/.local/lib/python3.12/site-packages`) — egy volume ott eltüntetné a
+> torch-ot és minden mást. Csak alkönyvtárat (`/home/airflow/.jupyter`) szabad.
+
+### 9.4 A modellkód csak olvasható
+
+Első nekifutásra a `/opt/app`-ot írhatóan mountoltam, és a notebook-futtatás
+`Permission denied`-del elszállt (a `/opt/app` a hoston UID 1000, a konténer 50000).
+
+A jogosultság javítása helyett a **tervet** javítottuk: a `/opt/app` git-kezelt
+könyvtár, amit `git pull` frissít. Ha a Jupyter oda mentene notebookokat, azok
+ütköznének a következő pull-lal. Ezért:
+
+```yaml
+    volumes:
+      - /opt/app:/opt/app:ro      # a modellkod, csak olvasva
+      - notebooks:/opt/notebooks  # a munka, kulon named volume-ban
+    environment:
+      PYTHONPATH: /opt/app        # hogy a modellkod importalhato legyen
+```
+
+### 9.5 Ellenőrzés
+
+A szerver futása nem elég — a **kernelt** kell próbára tenni. Egy notebook, amit
+`jupyter execute` futtat:
+
+```
+torch:  2.9.0+cpu | cuda: False
+pandas: 2.3.2 | numpy: 2.3.3
+postgres: PostgreSQL 16.15            <- a notebook sajat maga csatlakozott
+redis: ok | policy: allkeys-lru       <- irt es olvasott is
+KERNEL OK                              hibas cellak: 0
+```
+
+| | |
+|---|---|
+| Token nélkül `/api/contents` | **403** ✅ |
+| Rossz tokennel | **403** ✅ |
+| 8888 kívülről | **zárva** ✅ |
+| `/opt/app` írása a konténerből | tiltva (szándékosan) ✅ |
+| `/opt/notebooks` írása | működik ✅ |
+
+> **A 9. döntés itt élesedik:** a Jupyter teljes körű kódfuttatás a gépen, az éles
+> adatbázis elérésével. Ezt soha ne tedd ki szélesebb körben, mint a saját címed —
+> ha egyáltalán publikálod.
+
+---
+
 ## Amit az újraindítás-próbák igazoltak
 
-Öt teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
+Hat teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
 
 | | |
 |---|---|
@@ -808,9 +914,10 @@ docker:      29.7.2          compose: v5.5.0
 szolgáltatások:
   postgres   healthy   127.0.0.1:5432
   redis      healthy   127.0.0.1:6379
-szolgáltatások: 13 db - postgres, redis, airflow x4, prometheus, grafana,
-             node-exporter, cadvisor, postgres/redis/statsd-exporter
+szolgáltatások: 14 db - postgres, redis, airflow x4, jupyter, prometheus,
+             grafana, node-exporter, cadvisor, postgres/redis/statsd-exporter
              minden admin port 127.0.0.1-en
+image:       initinfra/app:dev 4.78 GB
 image-ek:    initinfra/app:dev (4.61GB), postgres:16, redis:7.2
 volume-ok:   initinfra_postgres-data   (és semmi más)
 ufw:         active    (csak 22/tcp)
@@ -844,4 +951,4 @@ DOCKER-USER: üres
 - [x] 6. Az `app` image: `FROM apache/airflow:3.3.1-python3.12`
 - [x] 7. Airflow négy komponense, LocalExecutorral
 - [x] 8. Prometheus, exporterek, Grafana
-- [ ] 9. Jupyter
+- [x] 9. Jupyter

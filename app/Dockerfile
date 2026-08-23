@@ -15,3 +15,12 @@ RUN pip install --no-cache-dir \
 # 2. reteg: minden mas. Ez valtozik gyakran, ezert van a torch utan.
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# SZABALY: minden konyvtarat, amire named volume kerul, MAR ITT letre kell hozni,
+# a helyes tulajdonossal. A Docker ugyanis csak akkor orokli a tulajdonost az
+# image-bol, ha a konyvtar letezik benne - kulonben root:root-kent hozza letre,
+# es az UID 50000-es folyamat nem tud beleirni:
+#   PermissionError: [Errno 13] Permission denied: '/home/airflow/.jupyter/migrated'
+USER root
+RUN mkdir -p /home/airflow/.jupyter /opt/notebooks  && chown -R 50000:0 /home/airflow/.jupyter /opt/notebooks
+USER airflow

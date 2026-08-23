@@ -40,3 +40,7 @@ apscheduler==3.11.3
 asyncpg
 redis
 websockets
+
+# --- Interaktiv munka. A jupyter kontener ugyanebbol az image-bol fut,
+#     igy a notebookok pontosan azokat a konyvtarakat latjak, mint a DAG-ok. ---
+jupyterlab==4.6.3

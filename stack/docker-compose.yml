@@ -305,8 +305,58 @@ services:
       - "9102"
       - "9125/udp"
 
+  # ---------------- Jupyter ----------------
+  # UGYANABBOL az app image-bol fut, mint az Airflow: a notebookok pontosan
+  # azokat a konyvtarakat es verziokat latjak, mint a DAG-ok. Nincs kulon venv,
+  # amit karban kellene tartani.
+  jupyter:
+    image: initinfra/app:dev
+    restart: unless-stopped
+    # Az airflow image entrypointja MINDEN parancsot az airflow CLI-nek ad tovabb
+    # ("jupyter --version" az airflow sugojat irja ki), ezert felul kell irni.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        jupyter lab
+        --ip=0.0.0.0 --port=8888 --no-browser
+        --IdentityProvider.token="${JUPYTER_TOKEN}"
+        --ServerApp.root_dir=/opt/notebooks
+    environment:
+      <<: *airflow-common-env
+      # A modellkod importalhato legyen a notebookokbol
+      PYTHONPATH: /opt/app
+    volumes:
+      # A modellkod CSAK OLVASHATO. Ez nem korlatozas, hanem vedelem: a /opt/app
+      # git-kezelt, es a kovetkezo "git pull" utkozne barmivel, amit ide mentenenk.
+      - /opt/app:/opt/app:ro
+      # A notebookok kulon, irhato helyen. Named volume, hogy a tulajdonost a
+      # Docker intezze - bind mount eseten az UID 50000 vs 1000 elteres miatt
+      # nem tudna irni.
+      - notebooks:/opt/notebooks
+      # FIGYELEM: a /home/airflow-ra NEM mountolunk semmit! A pip oda telepitett
+      # (/home/airflow/.local/lib/python3.12/site-packages), egy volume eltuntetne
+      # a torch-ot es minden mast. Csak az .jupyter alkonyvtarat perzisztaljuk.
+      - jupyter-config:/home/airflow/.jupyter
+    working_dir: /opt/notebooks
+    user: "${AIRFLOW_UID}:0"
+    ports:
+      # A Jupyter teljes koru kodfuttatas. Ezt SOHA ne tedd ki szelesebb korben,
+      # mint a sajat cimed - a 9. dontes ezt kifejezetten rogziti.
+      - "127.0.0.1:8888:8888"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8888/api || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   airflow-logs:
   prometheus-data:
   grafana-data:
+  jupyter-config:
+  notebooks:
