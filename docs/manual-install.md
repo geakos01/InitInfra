@@ -437,6 +437,113 @@ A `/data` üres marad — nincs RDB és nincs AOF fájl.
 
 ---
 
+## 6. Az `app` image
+
+Ez a közös image: ebből fut az Airflow négy komponense, a Jupyter és a FastAPI végpont
+is — így egyetlen Python-környezet van a gépen.
+
+### 6.1 Honnan jött a függőséglista
+
+Nem tippelve: a modellkód **tényleges `import` sorait** gyűjtöttük ki (36 releváns
+`.py` fájl), a verziókat pedig a fejlesztői venv `dist-info` mappáiból olvastuk ki.
+
+> **Az `environment.json` nem függőséglista.** A meglévő projektben így hívott fájl a
+> titkokat tartalmazza. Ne innen indulj.
+
+A talált külső függőségek három csoportra estek: **mag** (modell + API), **kereső**
+(`spacy`, `faiss`, `sentence-transformers`, `bm25s`), **kosár** (`mlxtend`, `fim`).
+Az image csak a **magot** viszi; a másik kettő ügyfélspecifikus, azoknak az
+`extra_python_packages` változó való.
+
+### 6.2 A döntő kérdés: pandas 2 vagy 3
+
+Az alap image **pandas 3.0.5**-öt hoz, a modellkód viszont **2.3.x**-re íródott. A
+pandas 3.0 major váltás (copy-on-write, string dtype), tehát ez nem apróság.
+
+A kérdés eldöntéséhez nem tippeltünk, hanem megnéztük az Airflow **tényleges**
+függőségeit a PyPI `requires_dist`-jéből:
+
+```bash
+curl -s https://pypi.org/pypi/apache-airflow-core/3.3.1/json
+```
+
+**Az `apache-airflow-core` 3.3.1 nem függ a pandastól és a numpytól.** A pandas csak
+opcionális extraként szerepel (`apache-airflow-providers-common-sql[pandas]`). Tehát a
+visszaléptetés szabad — és mérve is: a pandas 2.3.2-re rontása után az
+`airflow version`, az `airflow providers list` és a `pip check` is hibátlan.
+
+Amit viszont **tilos** felülírni, mert az `airflow-core` megköti:
+
+```
+sqlalchemy[asyncio] >= 2.0.50     <- a fejlesztői venv 2.0.43-a a minimum ALATT van
+fastapi  >= 0.129.0, < 0.137.0
+uvicorn  >= 0.37.0
+pydantic >= 2.11.0
+```
+
+### 6.3 A Dockerfile
+
+```dockerfile
+FROM apache/airflow:3.3.1-python3.12
+
+USER airflow
+
+# 1. réteg: torch, CPU-only. Külön rétegben, mert ritkán változik és nagy.
+RUN pip install --no-cache-dir       --index-url https://download.pytorch.org/whl/cpu       torch==2.9.0
+
+# 2. réteg: minden más. Ez változik gyakran, ezért van a torch után.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+```
+
+> **`--index-url`, nem `--extra-index-url`.** Az `--extra-index-url` mellett a pip a
+> PyPI CUDA-s buildjét választaná, ami ~2,5 GB nvidia libet hoz magával — olyan gépre,
+> ahol sosem lesz GPU. Az `--index-url` kizárja a PyPI-t; a PyTorch CPU-s indexe a
+> torch saját függőségeit is tartalmazza, tehát a feloldás sikerül. Ellenőrizve, hogy
+> a `torch-2.9.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl` létezik.
+
+> **A torch külön rétegben van.** Így a `requirements.txt` módosítása nem építi újra a
+> legnagyobb és leglassabb réteget.
+
+### 6.4 Építés és ellenőrzés
+
+```bash
+cd /opt/stack/app
+docker build -t initinfra/app:dev .
+```
+
+> **Az image entrypointja elkapja a parancsokat.** A `docker run ... pip check` az
+> Airflow súgóját írja ki, mert az entrypoint `airflow`-nak adja tovább. Használj
+> `python -m pip`-et, vagy `--entrypoint`-ot.
+
+Az ellenőrzés eredménye:
+
+| | |
+|---|---|
+| Image méret | 4,61 GB (az alap 3,21 GB volt) |
+| `python -m pip check` | `No broken requirements found` |
+| 16 modul együttes importja | mind OK |
+| `torch` | **2.9.0+cpu**, `cuda.is_available() == False` |
+| `airflow version` | 3.3.1 |
+| `airflow providers list` | betöltődik |
+
+A ténylegesen feloldott verziók:
+
+```
+pandas 2.3.2      numpy 2.3.3       scikit-learn 1.7.2
+torch 2.9.0+cpu   pytorch-lightning 2.5.5   optuna 4.5.0
+psycopg2-binary 2.9.10   asyncpg 0.31.0     redis 6.4.0
+sqlalchemy 2.0.51 fastapi 0.136.3   uvicorn 0.52.1
+pydantic 2.13.4   websockets 16.1.1  APScheduler 3.11.3
+```
+
+> **A `websockets` 16.1.1 lett** a fejlesztői venv 15.0.1-e helyett. Ellenőrizve:
+> a szerveroldali kód (`logger_api/app.py`) a **FastAPI** `WebSocket`-jét használja,
+> nem ezt a könyvtárat — a `websockets` csak kliens-szkriptekben szerepel,
+> `connect()`-tel, ami a 16-osban is megvan. Nincs porting-teher.
+
+---
+
 ## Amit az újraindítás-próbák igazoltak
 
 Három teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
@@ -460,6 +567,7 @@ docker:      29.7.2          compose: v5.5.0
 szolgáltatások:
   postgres   healthy   127.0.0.1:5432
   redis      healthy   127.0.0.1:6379
+image-ek:    initinfra/app:dev (4.61GB), postgres:16, redis:7.2
 volume-ok:   initinfra_postgres-data   (és semmi más)
 ufw:         active    (csak 22/tcp)
 fail2ban:    active
@@ -489,7 +597,7 @@ DOCKER-USER: üres
 - [x] 3. Gép-higiénia (`ufw`, `fail2ban`, `unattended-upgrades`, swap, időzóna)
 - [x] 4. Minimális `docker-compose.yml` Postgresszel
 - [x] 5. Redis
-- [ ] 6. Az `app` image: `FROM apache/airflow:3.3.1-python3.12`
+- [x] 6. Az `app` image: `FROM apache/airflow:3.3.1-python3.12`
 - [ ] 7. Airflow négy komponense, LocalExecutorral
 - [ ] 8. Prometheus, exporterek, Grafana
 - [ ] 9. Jupyter

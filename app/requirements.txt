@@ -1,0 +1,42 @@
+# Az InitInfra kozos "app" image Python-fuggosegei.
+# Ebbol az image-bol fut az Airflow negy komponense, a Jupyter es a FastAPI vegpont.
+#
+# ---------------------------------------------------------------------------
+# Mit pinnelunk es mit nem, es miert
+# ---------------------------------------------------------------------------
+# PINNELVE: amire a modellkod irodott, es amihez az airflow-core-nak semmi koze.
+#   Az apache-airflow-core 3.3.1 NEM fugg a pandastol es a numpytol - ellenorizve
+#   a PyPI requires_dist-jebol. Az alap image ugyan pandas 3.0.5-ot hoz, de a
+#   visszaleptetes 2.3.2-re bizonyitottan nem torte el az Airflow-t
+#   (airflow version, providers list, pip check - mind rendben).
+#
+# NEM PINNELVE: amit az airflow-core vagy egy provider hoz magaval. Ezek a
+#   pinnelt alap image-bol jonnek, tehat determinisztikusak - a pip nem frissiti
+#   oket, mert a kovetelmenyt mar teljesitik. Bepinnelve viszont utkoznenek egy
+#   kesobbi Airflow-frissiteskor. Az airflow-core sajat megkotesei:
+#     sqlalchemy[asyncio] >= 2.0.50   (a fejlesztoi venv 2.0.43-a a minimum ALATT)
+#     fastapi  >= 0.129.0, < 0.137.0
+#     uvicorn  >= 0.37.0
+#     pydantic >= 2.11.0
+#
+# A torch NINCS itt: kulon retegben telepul a Dockerfile-ban, a CPU-only
+# indexrol. PyPI-rol a CUDA-s build jonne, ~2.5 GB folosleges nvidia libbel.
+# ---------------------------------------------------------------------------
+
+# --- Adattudomany (az Airflow nem koti meg) ---
+pandas==2.3.2
+numpy==2.3.3
+scikit-learn==1.7.2
+optuna==4.5.0
+pytorch-lightning==2.5.5
+
+# --- Adatbazis ---
+psycopg2-binary==2.9.10
+
+# --- Utemezes az API-n belul (ezt mi hozzuk, semmi mas nem adja) ---
+apscheduler==3.11.3
+
+# --- Az alap image-bol jonnek, itt csak a megletuk kell ---
+asyncpg
+redis
+websockets

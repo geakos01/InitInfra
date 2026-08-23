@@ -13,10 +13,9 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1–5. lépése** is: rendszerfrissítés, Docker, gép-higiénia, **Postgres és Redis**.
-A VM-en mindkét szolgáltatás `healthy`, loopbackre kötve. A jegyzet a
-[manual-install.md](manual-install.md)-ben gyűlik. Következő: az **1. fázis 6. lépése**,
-az `app` image (`FROM apache/airflow:3.3.1-python3.12`).
+1–6. lépése** is: rendszerfrissítés, Docker, gép-higiénia, **Postgres, Redis**, és az
+**`app` image**. A jegyzet a [manual-install.md](manual-install.md)-ben gyűlik.
+Következő: az **1. fázis 7. lépése**, az Airflow négy komponense LocalExecutorral.
 
 **Mi van kész:**
 
@@ -26,6 +25,7 @@ az `app` image (`FROM apache/airflow:3.3.1-python3.12`).
 | `docs/ROADMAP.md` | 10 fázisú építési útmutató, fázisonként kész-kritériummal |
 | `docs/WORKLOG.md` | ez a fájl |
 | `docs/manual-install.md` | **az 1. fázis terméke** — minden működő parancs, indoklással |
+| `app/Dockerfile`, `app/requirements.txt` | a közös `app` image — mérve, nem tippelve |
 | `scripts/setup-dev.sh` | interaktív wizard a 0.2–0.4 lépésekhez (idempotens, újrafuttatható) |
 | `.gitattributes` | `* text=auto eol=lf` — az első commit óta, ez nem véletlen |
 | `.claude/settings.json` | 5 read-only parancs engedélylistája |
@@ -41,14 +41,15 @@ az `app` image (`FROM apache/airflow:3.3.1-python3.12`).
 | Cél-VM | `infra` — Ubuntu 24.04.4 LTS, 4 mag / 8 GB / 40 GB |
 | A VM-en | Docker 29.7.2 + Compose v5.5.0, ufw (csak 22), fail2ban, 4G swap, Europe/Budapest |
 | A stack | `/opt/stack` — `postgres:16` (`airflow` + `app` DB) és `redis:7.2`, mindkettő `127.0.0.1`-en |
+| `app` image | `initinfra/app:dev`, 4.61 GB — Airflow 3.3.1 + torch 2.9.0+**cpu** + a modellkód függőségei |
 | Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — stabil név; az IP minden újraindításkor változik |
 | Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
 | `.env` | `VM_NAME`, `VM_HOST`, `VM_IP`, `GH_OWNER` — **gitignore-olt** |
 
 **Mi a következő teendő:**
 
-Az **1. fázis 6–9. lépése**: az `app` image, az Airflow négy komponense
-LocalExecutorral, observability, Jupyter. Minden működő parancs megy a
+Az **1. fázis 7–9. lépése**: az Airflow négy komponense LocalExecutorral,
+observability, Jupyter. Minden működő parancs megy a
 `manual-install.md`-be — az adja a 2. fázis Ansible-jének a bemenetét.
 
 A 4–5. lépés három újraindítást is kiállt: a Postgres adata megmaradt (named volume),
