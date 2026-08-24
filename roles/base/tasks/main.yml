@@ -2,6 +2,27 @@
 # A manual-install.md 1. es 3. szakasza. A sorrend NEM tetszoleges:
 # az ufw-nel eloszor az SSH-t engedelyezzuk, csak utana kapcsoljuk be.
 
+# --- Az apt megkemenyitese --------------------------------------------------
+# Ez az ELSO task, mert a tobbi apt-muveletre is vonatkoznia kell.
+#
+# Miert kell: friss VM-en belefutottunk abba, hogy az apt-get upgrade 25 percig
+# "futott" NULLA CPU-idovel - egy megakadt CDN-kapcsolatra vart, ami sosem
+# erkezett meg. Alapertelmezesben az apt-nak NINCS idokorlata, tehat ez orokre
+# igy maradt volna, visszajelzes nelkul. Egy telepitoben ez elfogadhatatlan.
+- name: Apt idokorlatok es ujraprobalkozas
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/99-initinfra-halozat
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Az Ansible generalja - kezzel ne szerkeszd.
+      Acquire::http::Timeout "30";
+      Acquire::https::Timeout "30";
+      Acquire::ftp::Timeout "30";
+      Acquire::Retries "3";
+  tags: [base, apt]
+
 # --- Csomagok ---------------------------------------------------------------
 - name: Apt gyorsitotar frissitese
   ansible.builtin.apt:
