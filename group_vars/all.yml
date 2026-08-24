@@ -14,6 +14,12 @@ swap_size_mb: 4096
 # akarjuk, hogy a kernel kedvtelesbol lapozzon ki memoriat.
 swappiness: 10
 
+# Az apt IPv4-en toltson. Friss VM-en belefutottunk abba, hogy a gepen az IPv6
+# hirdetve van, de nem mukodik (curl -6 azonnal elhasal, curl -4 megy). Ilyenkor
+# az apt ora hosszat "fut" nulla CPU-idovel. Ha a celgepen mukodo IPv6 van,
+# nyugodtan allitsd false-ra.
+apt_force_ipv4: true
+
 # --- SSH es tuzfal ----------------------------------------------------------
 ssh_port: 22
 fail2ban_bantime: 1h

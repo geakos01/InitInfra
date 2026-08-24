@@ -21,6 +21,13 @@
       Acquire::https::Timeout "30";
       Acquire::ftp::Timeout "30";
       Acquire::Retries "3";
+      // A HTTP pipelining kikapcsolasa. Az idokorlat ONMAGABAN NEM ELEG:
+      // meressel kiderult, hogy a kapcsolatok CLOSE-WAIT allapotban ragadnak
+      // (a tuloldal lezarta, az apt varakozik tovabb), amire a Timeout nem
+      // vonatkozik. Pipelining nelkul az upgrade 5,5 perc alatt lefutott a
+      // korabbi vegtelen akadas helyett.
+      Acquire::http::Pipeline-Depth "0";
+      Acquire::ForceIPv4 "{{ 'true' if apt_force_ipv4 else 'false' }}";
   tags: [base, apt]
 
 # --- Csomagok ---------------------------------------------------------------
