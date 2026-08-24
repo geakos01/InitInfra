@@ -242,6 +242,33 @@ ne kelljen átírni.
 
 **Kész, ha:** `make verify` önmagában fut és zöld, egy már telepített gépen.
 
+
+### Amit a 2. fázis nulláról-próbája kiderített a bootstrapről
+
+Ezek nem elméleti aggályok: mindegyikbe **belefutottunk** egy friss Multipass VM-en.
+
+1. **Meg kell várni a `cloud-init`-et.** Percekig fut, és fogja az apt zárat.
+   Enélkül a bootstrap első `apt-get`-je azonnal elhasal:
+   `Could not get lock /var/lib/apt/lists/lock`.
+
+   ```bash
+   sudo cloud-init status --wait
+   ```
+
+2. **Az `apt` megkeményítése MÉG A TELEPÍTÉS ELŐTT kell**, nem az Ansible-ben.
+   Az `apt-get upgrade` 25 percig „futott" nulla CPU-idővel, mert megakadt egy
+   félig lezárt HTTP-kapcsolaton. Az `Acquire::Timeout` **önmagában nem elég** —
+   a `Pipeline-Depth 0` az, ami megoldja. Ha a bootstrap előbb telepít
+   (`ansible`, `make`), akkor az ő aptja is beleakadhat, tehát a konfigot
+   a bootstrapnek is ki kell írnia.
+
+3. **`git` már van a cloud image-en, `make` és `ansible` nincs.** A bootstrap
+   tehát klónozni tud telepítés előtt, de a `make dev` hívása előtt telepítenie
+   kell mindkettőt.
+
+4. **A `pkill -f <minta>` megeheti a saját munkamenetet**, ha a minta szerepel a
+   parancssorában. Hibaelhárító szkriptekben PID szerint ölj, ne minta szerint.
+
 ---
 
 ## 8. fázis — Éles próba nulláról

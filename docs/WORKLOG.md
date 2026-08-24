@@ -13,12 +13,15 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1. fázisa TELJESEN KÉSZ**. **15 szolgáltatás fut** a VM-en, újraindítás után 40 mp
-alatt mind fent. Kívülről egyedül a `8000`-es (API) érhető el, a hét admin port mind
-zárt. A teljes jegyzet: [manual-install.md](manual-install.md).
+1. és 2. fázisa is KÉSZ**.
 
-**Következő a 2. fázis:** mindezt Ansible-szerepkörökre fordítani. A bemenete a
-`manual-install.md` — ott minden parancs ott van, indoklással.
+Az 1. fázisban kézzel felépült mind a 15 szolgáltatás (a jegyzet:
+[manual-install.md](manual-install.md)). A 2. fázisban megszületett az **Ansible váz**,
+és a `base` + `docker` szerepkör **friss VM-en, nulláról lefutott** — a második futás
+`changed=0`.
+
+**Következő a 3. fázis:** a `stack` szerepkör, Postgresszel és Redisszel. A működő
+compose-fájl és minden konfig már a repóban van, tehát ez nagyrészt sablonosítás.
 
 **Mi van kész:**
 
@@ -53,14 +56,18 @@ zárt. A teljes jegyzet: [manual-install.md](manual-install.md).
 | Observability | Prometheus `:9090`, Grafana `:3000`, node/cadvisor/postgres/redis/statsd exporterek — 6/6 target UP |
 | Jupyter | `127.0.0.1:8888`, tokennel védve, ugyanabból az `app` image-ből; `/opt/app` **csak olvasva** |
 | `api` | `0.0.0.0:8000` — **az egyetlen kifelé nyitott**, a kód a `/opt/app`-ból jön |
+
+> **A VM-et a 2. fázis végén eldobtuk és újraépítettük.** Most csak a `base` + `docker`
+> szerepkör van rajta, a 15 konténeres stack nincs — azt a 3–6. fázis építi vissza,
+> Ansible-ből. Minden konfig a repóban van.
 | Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — stabil név; az IP minden újraindításkor változik |
 | Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
 | `.env` | `VM_NAME`, `VM_HOST`, `VM_IP`, `GH_OWNER` — **gitignore-olt** |
 
 **Mi a következő teendő:**
 
-A **2. fázis**: `base` és `docker` szerepkör, `Makefile`, majd szerepkörönként a
-`stack`. A fordítás innentől nagyrészt mechanikus.
+A **3. fázis**: a `stack` szerepkör Postgresszel és Redisszel. A fordítás innentől
+nagyrészt sablonosítás — a működő fájlok a `stack/` alatt vannak.
 
 Amit a 2. fázisnak külön észben kell tartania (a jegyzetből):
 
@@ -427,3 +434,54 @@ rossz dolgot csinálna. A megoldás idézőjel — a Compose lehúzza, a shell m
 A közös bennük, hogy egyik sem látszott volna abból, hogy „elindult a konténer". Ezért
 futott minden lépés végén valódi terhelés: DAG-trigger, notebook-végrehajtás,
 websocket-forgalom.
+
+---
+
+## 2026-08-24 — A 2. fázis kész: Ansible váz, `base` és `docker`
+
+### Mi történt
+
+Megszületett az Ansible váz (`ansible.cfg`, `site.yml`, `inventory`, `group_vars`,
+`Makefile`) és az első két szerepkör. **Friss VM-en, nulláról lefutott**
+(`ok=27, changed=18, failed=0`), a második futás pedig `changed=0` — ez a fázis
+tényleges kritériuma.
+
+A VM-et szándékosan eldobtuk és újraépítettük. Megérte: a kézzel beállított gépen
+minden `ok`-ot írt volna, és **három valódi hiba maradt volna rejtve**.
+
+### Amit csak a nulláról-próba talált meg
+
+**1. A `cloud-init` fogja az apt zárat.** Percekig fut egy friss gépen, és az első
+`apt-get` azonnal elhasal: `Could not get lock`. A bootstrapnek `cloud-init status
+--wait`-tel kell kezdenie.
+
+**2. Az `apt`-nak nincs időkorlátja.** Az `apt-get upgrade` **25 percig „futott" nulla
+CPU-idővel** — egy meg nem érkező HTTP-válaszra várt. Alapértelmezésben ez örökre így
+maradt volna, visszajelzés nélkül.
+
+**3. Az időkorlát önmagában nem elég** — és ez a legtanulságosabb. A javításom
+*helyesnek látszott*: az `apt-config dump` visszaigazolta, hogy a `Timeout 30`
+érvényben van. Mégis megint megakadt. A `ss -tnp` mutatta meg, miért: a kapcsolatok
+**`CLOSE-WAIT` állapotban ragadtak** — a túloldal lezárta, az apt várt tovább —, amire
+az olvasási időkorlát nem vonatkozik.
+
+A megoldás a HTTP pipelining kikapcsolása. Ráadásul kiderült, hogy ezen a gépen
+**az IPv6 hirdetve van, de nem működik** (`curl -6` azonnal elhasal, `curl -4` megy) —
+bérelt szervereken ez a kombináció egyáltalán nem ritka. `Pipeline-Depth 0` és
+`ForceIPv4` mellett az upgrade 329 mp alatt lefutott, exit 0.
+
+### Egy saját hiba, ami tanulságos
+
+A beragadt folyamatot `pkill -f "apt/methods"`-szal próbáltam megölni — és **a saját
+ssh-munkamenetemet lőttem le**, mert a minta szerepelt a parancssoromban is.
+Hibaelhárító szkriptekben PID szerint kell ölni, nem minta szerint. Ugyanez a
+`pgrep`-nél is félrevezetett: „fut az apt-get" jelzést adott, miközben csak önmagára
+illeszkedett.
+
+### A Makefile-ról
+
+Az első változat awk `printf`-jében `` és `
+` szerepelt. Ezek írás közben valódi
+vezérlőkarakterré alakultak, a beágyazott újsor pedig kettétörte a receptet:
+`missing separator`. A színezés nem éri meg ezt a törékenységet — a `help` most
+`sed` + `column` párossal áll elő, escape nélkül.
