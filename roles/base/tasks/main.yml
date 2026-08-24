@@ -20,6 +20,9 @@
       - ca-certificates
       - curl
       - gnupg
+      # A make-et a szerepkor telepiti, de a bootstrap.sh-nak MAR ELOTTE
+      # kell, kulonben a "make dev" meg sem hivhato. Ott is szerepel.
+      - make
       - ufw
       - fail2ban
       - unattended-upgrades
