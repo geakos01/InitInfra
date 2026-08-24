@@ -891,9 +891,96 @@ KERNEL OK                              hibas cellak: 0
 
 ---
 
+## 10. A FastAPI végpont (`api`)
+
+Ez a stack **egyetlen eleme, ami valóban kifelé néz** — és az egyetlen, aminek a
+*kódja* nem az InitInfra része. A végpont ügyfelenként más, a `/opt/app`-ba kerül
+`git pull`-lal. Az InitInfra csak a konténert és a felügyeletet adja hozzá, ezért
+változó a parancs és a port is:
+
+```
+API_PORT=8000
+API_COMMAND="uvicorn logger_api.app:app --host 0.0.0.0 --port 8000"
+```
+
+### 10.1 A port NEM loopback
+
+```yaml
+    ports:
+      - "${API_PORT}:8000"      # nem 127.0.0.1!
+```
+
+Ez szándékos, és az egyetlen ilyen a stackben. A végpontot vagy a látogató böngészője
+hívja (publikus), vagy az ügyfél backend szervere (privát hálózatról). A szűkítés — ha
+kell — az `api_allowed_ips`-ból generált `DOCKER-USER` szabályokkal történik, **nem
+`ufw`-vel**: azt a Docker megkerülné (4. szakasz).
+
+### 10.2 ⚠ A `.env`-ben idézőjelezni kell a szóközös értékeket
+
+Az `API_COMMAND` szóközöket tartalmaz. A Docker Compose ezt idézőjelek nélkül is
+helyesen kezeli — **de amint egy shell `source`-olja a `.env`-et**, a bash a második
+szót parancsnak nézi:
+
+```
+./.env: line 19: logger_api.app:app: command not found
+```
+
+Ez éles gépen egy operátor-szkriptben csendben rossz dolgot csinálna. A megoldás
+egyszerű, és mindkét oldal jól kezeli (a Compose lehúzza a külső idézőjeleket):
+
+```
+API_COMMAND="uvicorn logger_api.app:app --host 0.0.0.0 --port 8000"
+```
+
+### 10.3 Ellenőrzés
+
+A vezetékezést egy minta-végponttal bizonyítottuk
+([`tests/minta_api/app.py`](../tests/minta_api/app.py)) — **nem** ez a végleges kód,
+csak ugyanazt az utat járja: websocket → típus eldöntése → opcionálisan Redis →
+batch Postgres.
+
+```
+-> megtekintes  redisben=True  kiirt_sorok=0
+-> megtekintes  redisben=True  kiirt_sorok=0
+-> kosarba      redisben=False kiirt_sorok=0
+-> megtekintes  redisben=True  kiirt_sorok=0
+-> vasarlas     redisben=False kiirt_sorok=5    <- a batch kiurult
+```
+
+| | |
+|---|---|
+| Postgres | 3 `megtekintes`, 1 `kosarba`, 1 `vasarlas` |
+| Redis | `session:s-42` (2 elem), `session:s-99`, TTL **691 180 mp ≈ 8 nap** |
+| `/health` **kívülről** | `{"status":"ok","postgres":true,"redis":true}` |
+| Adat újraindítás után | megmaradt (Postgres); a Redis felejtett — a terv szerint |
+
+---
+
+## A fázis végállapota
+
+**15 szolgáltatás**, újraindítás után 40 mp alatt mind fent:
+
+```
+postgres  redis  airflow-{apiserver,scheduler,dag-processor,triggerer}
+jupyter   api    prometheus  grafana
+node-exporter  cadvisor  postgres-exporter  redis-exporter  statsd-exporter
+```
+
+A biztonsági kép, kívülről mérve:
+
+| Port | |
+|---|---|
+| **8000** (API) | **nyitva** — ez a dolga |
+| 8080, 3000, 8888, 9090, 8081, 5432, 6379 | **mind zárt** |
+
+Hat named volume: `postgres-data`, `airflow-logs`, `prometheus-data`, `grafana-data`,
+`jupyter-config`, `notebooks`.
+
+---
+
 ## Amit az újraindítás-próbák igazoltak
 
-Hat teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
+Hét teljes `sudo systemctl reboot`, mindegyik után ellenőrizve:
 
 | | |
 |---|---|
@@ -941,7 +1028,7 @@ DOCKER-USER: üres
 
 ---
 
-## Következő lépések (ROADMAP 1. fázis)
+## Az 1. fázis lépései — mind kész
 
 - [x] 1. Rendszerfrissítés
 - [x] 2. Docker a hivatalos repóból
@@ -952,3 +1039,7 @@ DOCKER-USER: üres
 - [x] 7. Airflow négy komponense, LocalExecutorral
 - [x] 8. Prometheus, exporterek, Grafana
 - [x] 9. Jupyter
+- [x] 10. A FastAPI végpont (`api`)
+
+**Az 1. fázis lezárva.** A következő a 2. fázis: mindezt Ansible-szerepkörökre
+fordítani. A bemenete ez a fájl.

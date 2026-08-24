@@ -353,6 +353,44 @@ services:
       postgres:
         condition: service_healthy
 
+  # ---------------- FastAPI vegpont ----------------
+  # Ez a stack EGYETLEN eleme, ami valoban kifele nez. A kod maga NEM az
+  # InitInfra resze: a /opt/app-bol jon, ugyfelenkent mas, git pull frissiti.
+  # Az InitInfra csak a kontenert es a felugyeletet adja hozza - ezert
+  # valtozo a parancs es a port is.
+  api:
+    image: initinfra/app:dev
+    restart: unless-stopped
+    # Az airflow entrypoint itt is elkapna a parancsot, ezert felulirjuk.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - ${API_COMMAND}
+    environment:
+      <<: *airflow-common-env
+      PYTHONPATH: /opt/app
+    volumes:
+      # Csak olvasva, mint a Jupyternel: a /opt/app git-kezelt.
+      - /opt/app:/opt/app:ro
+    working_dir: /opt/app
+    user: "${AIRFLOW_UID}:0"
+    ports:
+      # NEM loopback! Ezt a vegpontot vagy a latogato bongeszoje hivja, vagy az
+      # ugyfel backend szervere - mindket esetben kivulrol. A szukites (ha kell)
+      # az api_allowed_ips-bol generalt DOCKER-USER szabalyokkal tortenik,
+      # NEM ufw-vel: a Docker azt megkerulne (lasd a 4. szakaszt).
+      - "${API_PORT}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   airflow-logs:

@@ -13,10 +13,12 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1–9. lépése is kész**. **14 szolgáltatás fut**: Postgres, Redis, Airflow ×4, Jupyter,
-és a teljes observability. 6/6 Prometheus target UP, minden admin port loopbackon.
-A jegyzet a [manual-install.md](manual-install.md)-ben gyűlik.
-Következő: az **`api` (FastAPI) konténer** — az az utolsó a 15-ből, és kész az 1. fázis.
+1. fázisa TELJESEN KÉSZ**. **15 szolgáltatás fut** a VM-en, újraindítás után 40 mp
+alatt mind fent. Kívülről egyedül a `8000`-es (API) érhető el, a hét admin port mind
+zárt. A teljes jegyzet: [manual-install.md](manual-install.md).
+
+**Következő a 2. fázis:** mindezt Ansible-szerepkörökre fordítani. A bemenete a
+`manual-install.md` — ott minden parancs ott van, indoklással.
 
 **Mi van kész:**
 
@@ -30,6 +32,7 @@ Következő: az **`api` (FastAPI) konténer** — az az utolsó a 15-ből, és k
 | `stack/docker-compose.yml` | a működő stack: 13 szolgáltatás |
 | `stack/prometheus/`, `stack/grafana/` | scrape-konfig, statsd mapping (19 szabály), Grafana adatforrás |
 | `tests/smoke_test_dag.py` | füst-teszt: valódi DAG-futás, könyvtárak + DB-kapcsolat |
+| `tests/minta_api/`, `tests/ws_kliens.py` | minta-végpont és websocket kliens a vezetékezés próbájához |
 | `scripts/setup-dev.sh` | interaktív wizard a 0.2–0.4 lépésekhez (idempotens, újrafuttatható) |
 | `.gitattributes` | `* text=auto eol=lf` — az első commit óta, ez nem véletlen |
 | `.claude/settings.json` | 5 read-only parancs engedélylistája |
@@ -49,14 +52,23 @@ Következő: az **`api` (FastAPI) konténer** — az az utolsó a 15-ből, és k
 | Airflow | 4 komponens (`apiserver`, `scheduler`, `dag-processor`, `triggerer`), LocalExecutor, `127.0.0.1:8080` |
 | Observability | Prometheus `:9090`, Grafana `:3000`, node/cadvisor/postgres/redis/statsd exporterek — 6/6 target UP |
 | Jupyter | `127.0.0.1:8888`, tokennel védve, ugyanabból az `app` image-ből; `/opt/app` **csak olvasva** |
+| `api` | `0.0.0.0:8000` — **az egyetlen kifelé nyitott**, a kód a `/opt/app`-ból jön |
 | Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — stabil név; az IP minden újraindításkor változik |
 | Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
 | `.env` | `VM_NAME`, `VM_HOST`, `VM_IP`, `GH_OWNER` — **gitignore-olt** |
 
 **Mi a következő teendő:**
 
-Az **`api` (FastAPI) konténer** — az utolsó a 15-ből. Utána az 1. fázis kész, és
-jöhet a **2. fázis**: az egészet Ansible-szerepkörökre fordítani. Minden működő parancs megy a
+A **2. fázis**: `base` és `docker` szerepkör, `Makefile`, majd szerepkörönként a
+`stack`. A fordítás innentől nagyrészt mechanikus.
+
+Amit a 2. fázisnak külön észben kell tartania (a jegyzetből):
+
+- a `mem_limit`, `REDIS_MAXMEMORY`, swap-méret, időzóna **változóból**
+- a `DOCKER-USER` blokk **mindig** renderelődjön, akkor is ha üres
+- a `docker` csoporttagság miatt `meta: reset_connection` kell
+- minden named volume célkönyvtárát **az image-ben** kell létrehozni, helyes tulajdonossal
+- a `.env` szóközös értékeit **idézőjelezni** kell Minden működő parancs megy a
 `manual-install.md`-be — az adja a 2. fázis Ansible-jének a bemenetét.
 
 A 4–5. lépés három újraindítást is kiállt: a Postgres adata megmaradt (named volume),
@@ -370,3 +382,48 @@ A jogosultság megpiszkálása helyett kiderült, hogy **oda nem is szabad írni
 `/opt/app` git-kezelt, `git pull` frissíti, és bármi, amit a Jupyter odament, ütközne
 a következő pull-lal. Így lett a modellkód **csak olvasható**, a notebookok pedig külön
 named volume-ba kerültek, `PYTHONPATH=/opt/app` mellett.
+
+---
+
+## 2026-08-24 — Az 1. fázis lezárva (10. lépés: az `api`)
+
+### Mi történt
+
+Megvan a 15. szolgáltatás, és ezzel **a kézi telepítés teljes**. Egy szűz Ubuntu
+24.04-ből eljutottunk oda, hogy minden fut, mindent újraindítás-próbán is átvittünk,
+és minden parancs le van írva a `manual-install.md`-ben.
+
+Az `api` a stack egyetlen eleme, ami valóban kifelé néz, és az egyetlen, aminek a
+*kódja* nem az InitInfra része. Ezért a portja és a parancsa is változó. A
+vezetékezést egy minta-végponttal bizonyítottuk, ami a leírt utat járja: websocket →
+típus eldöntése → opcionálisan Redis (session history, 8 napos TTL) → batch Postgres.
+
+### Egy csendes hiba, ami éles gépen fájt volna
+
+Az `API_COMMAND` értékében szóközök vannak. A Docker Compose ezt idézőjelek nélkül is
+jól kezeli — **de amint egy shell `source`-olja a `.env`-et**, a bash a második szót
+parancsnak nézi:
+
+```
+./.env: line 19: logger_api.app:app: command not found
+```
+
+A saját ellenőrző parancsaimban bukott ki. Egy operátor-szkriptben ugyanez csendben
+rossz dolgot csinálna. A megoldás idézőjel — a Compose lehúzza, a shell megérti.
+
+### A fázis mérlege
+
+Öt olyan dolog derült ki, ami a tervben nem szerepelt, és mindegyik méréssel:
+
+1. **A Docker megkerüli az `ufw`-t** — a publikált portok szűrése a `DOCKER-USER`
+   láncban történik, `--ctorigdstport` és `--ctdir ORIGINAL` szabályokkal.
+2. **A cAdvisor pinnelt verziója nem létezett** — a projekt regisztrátumot váltott.
+3. **Az Airflow a `dag_id`-t a metrikanevekbe ágyazza** — statsd mapping nélkül
+   kezelhetetlen metrikarobbanás. 19 szabály lett belőle.
+4. **A named volume-ok tulajdonosa** `root:root`, ha a könyvtár nem létezik az
+   image-ben — és a tünet félrevezető: a szolgáltatás `healthy` lesz, csak a munka bukik.
+5. **A `.env` szóközös értékeit idézőjelezni kell**, különben a `source` elhasal.
+
+A közös bennük, hogy egyik sem látszott volna abból, hogy „elindult a konténer". Ezért
+futott minden lépés végén valódi terhelés: DAG-trigger, notebook-végrehajtás,
+websocket-forgalom.
