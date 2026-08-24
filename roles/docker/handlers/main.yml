@@ -1,0 +1,4 @@
+---
+- name: ufw ujratoltese
+  ansible.builtin.command: ufw reload
+  changed_when: true

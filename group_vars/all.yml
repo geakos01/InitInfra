@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# Alapertelmezesek MINDEN gepre.
+#
+# Gepenkent eltero ertekeket NE ide irj, hanem egy group_vars/<gep>.yml-be.
+# Ez a fajl az, ami minden ugyfelnel ugyanaz - a szemelyre szabas a masik.
+# ---------------------------------------------------------------------------
+
+# --- Gep-higienia -----------------------------------------------------------
+timezone: Europe/Budapest
+
+# A dev VM 8 GB RAM-os, az eles gep akar 32 GB. A swap ne legyen bedrotozva.
+swap_size_mb: 4096
+# 10 = csak akkor swapelj, ha tenyleg muszaj. Adatbazist futtato gepen nem
+# akarjuk, hogy a kernel kedvtelesbol lapozzon ki memoriat.
+swappiness: 10
+
+# --- SSH es tuzfal ----------------------------------------------------------
+ssh_port: 22
+fail2ban_bantime: 1h
+fail2ban_findtime: 10m
+fail2ban_maxretry: 5
+
+# --- Docker -----------------------------------------------------------------
+docker_users:
+  - ubuntu
+
+# --- Publikalas -------------------------------------------------------------
+# Alapertelmezesben MINDEN admin felulet loopbackon van, SSH tunnelen kereszul
+# erheto el. A publikalas gepenkenti kapcsolo.
+#
+# FIGYELEM: a Docker megkeruli az ufw-t (lasd docs/manual-install.md 4. szakasz).
+# Az allowed_ips ezert NEM ufw szabalyokat general, hanem DOCKER-USER lancot.
+publish_web_ui: false
+allowed_ips: []
+
+# --- A FastAPI vegpont ------------------------------------------------------
+# Ez a stack egyetlen eleme, ami valoban kifele nez. A KODJA nem az InitInfra
+# resze: a /opt/app-bol jon, ugyfelenkent mas.
+api_enabled: true
+api_port: 8000
+api_command: "uvicorn logger_api.app:app --host 0.0.0.0 --port 8000"
+# Ures lista = a vilag fele nyitva. Ha az ugyfel backendje hivja, ide az o IP-je jon.
+api_allowed_ips: []
+
+# --- Utvonalak (ezeket ritkan kell atirni) ----------------------------------
+stack_dir: /opt/stack
+app_dir: /opt/app
+initinfra_dir: /opt/initinfra

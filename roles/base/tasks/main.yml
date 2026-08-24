@@ -1,0 +1,145 @@
+---
+# A manual-install.md 1. es 3. szakasza. A sorrend NEM tetszoleges:
+# az ufw-nel eloszor az SSH-t engedelyezzuk, csak utana kapcsoljuk be.
+
+# --- Csomagok ---------------------------------------------------------------
+- name: Apt gyorsitotar frissitese
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600      # egy orán belul ne frissitsen ujra: idempotencia
+  tags: [base, apt]
+
+- name: Rendszer frissitese
+  ansible.builtin.apt:
+    upgrade: safe
+  tags: [base, apt]
+
+- name: Alapcsomagok telepitese
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - python3-psycopg2      # az Ansible postgres moduljaihoz, kesobb kell
+    state: present
+  tags: [base, apt]
+
+# --- Idozona ----------------------------------------------------------------
+- name: Idozona beallitasa
+  community.general.timezone:
+    name: "{{ timezone }}"
+  tags: [base, time]
+
+# --- Swap -------------------------------------------------------------------
+- name: Aktiv swap lekerdezese
+  ansible.builtin.command: swapon --noheadings --show=NAME
+  register: swap_aktiv
+  changed_when: false
+  failed_when: false
+  tags: [base, swap]
+
+- name: Swapfajl letrehozasa
+  ansible.builtin.command:
+    cmd: "fallocate -l {{ swap_size_mb }}M /swapfile"
+    creates: /swapfile
+  tags: [base, swap]
+
+- name: Swapfajl jogosultsaga
+  ansible.builtin.file:
+    path: /swapfile
+    owner: root
+    group: root
+    mode: "0600"
+  tags: [base, swap]
+
+# A mkswap ujrafuttatasa "changed"-et irna minden korben, ezert csak akkor
+# fut, ha a swap meg nincs bekapcsolva.
+- name: Swap formazasa es bekapcsolasa
+  ansible.builtin.shell: |
+    set -e
+    mkswap /swapfile
+    swapon /swapfile
+  when: "'/swapfile' not in swap_aktiv.stdout"
+  tags: [base, swap]
+
+- name: Swap bejegyzese az fstab-ba
+  ansible.posix.mount:
+    path: none
+    src: /swapfile
+    fstype: swap
+    opts: sw
+    state: present
+  tags: [base, swap]
+
+- name: Swappiness beallitasa
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ swappiness }}"
+    sysctl_file: /etc/sysctl.d/99-swappiness.conf
+    sysctl_set: true
+    state: present
+    reload: true
+  tags: [base, swap]
+
+# --- Tuzfal -----------------------------------------------------------------
+# ELOSZOR az SSH. Forditva kizarnank magunkat a tavoli gepbol, es nincs visszaut.
+- name: SSH engedelyezese az ufw-ben
+  community.general.ufw:
+    rule: allow
+    port: "{{ ssh_port }}"
+    proto: tcp
+    comment: ssh
+  tags: [base, ufw]
+
+- name: Alapertelmezesek es az ufw bekapcsolasa
+  community.general.ufw:
+    state: enabled
+    policy: "{{ item.policy }}"
+    direction: "{{ item.direction }}"
+  loop:
+    - { direction: incoming, policy: deny }
+    - { direction: outgoing, policy: allow }
+  tags: [base, ufw]
+
+# --- fail2ban ---------------------------------------------------------------
+# Ubuntu 24.04-en alapbol mukodik, de a disztro alapertelmezesei verziorol
+# verziora valtozhatnak. A "szabvanyositott install" celja epp az, hogy ne a
+# disztro dontson helyettunk - ezert irunk ki explicit jail.local-t.
+- name: fail2ban jail.local kiirasa
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: fail2ban ujrainditasa
+  tags: [base, fail2ban]
+
+- name: fail2ban engedelyezese es inditasa
+  ansible.builtin.service:
+    name: fail2ban
+    enabled: true
+    state: started
+  tags: [base, fail2ban]
+
+# --- Automatikus biztonsagi frissitesek -------------------------------------
+- name: unattended-upgrades bekapcsolasa
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  tags: [base, apt]
+
+- name: unattended-upgrades engedelyezese
+  ansible.builtin.service:
+    name: unattended-upgrades
+    enabled: true
+    state: started
+  tags: [base, apt]

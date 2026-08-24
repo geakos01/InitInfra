@@ -1,0 +1,11 @@
+---
+# A DOCKER-USER lancba kerulo szabalyok. Minden elem egy port es a hozza
+# tartozo engedelyezett IP-k:
+#
+#   docker_user_rules:
+#     - port: 3000
+#       allowed_ips: [1.2.3.4]
+#
+# Ures listaval is KIRENDERELJUK a blokkot - lasd a sablon megjegyzeset.
+# A stack szerepkorok (5-6. fazis) toltik fel a publikalt portok alapjan.
+docker_user_rules: []

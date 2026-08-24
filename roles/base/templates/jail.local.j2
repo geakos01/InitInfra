@@ -1,0 +1,11 @@
+# Az Ansible generalja - kezzel ne szerkeszd, elveszik.
+# Forras: roles/base/templates/jail.local.j2
+[DEFAULT]
+bantime  = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
+backend  = systemd
+
+[sshd]
+enabled = true
+port    = {{ ssh_port }}

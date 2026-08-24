@@ -1,0 +1,16 @@
+*filter
+{# A kovetkezo sor NULLAZZA a lancot ufw reload-kor. Ezert kell a blokkot MINDIG
+   kirenderelni, akkor is, ha nincs egyetlen szabaly sem: kulonben a korabban
+   berakott szabalyok bennragadnanak az elo lancban, es a kikapcsolas nem mukodne. #}
+:DOCKER-USER - [0:0]
+{% for r in docker_user_rules %}
+{% for ip in r.allowed_ips %}
+-A DOCKER-USER -p tcp -s {{ ip }} -m conntrack --ctorigdstport {{ r.port }} --ctdir ORIGINAL -j ACCEPT
+{% endfor %}
+{#  A --ctorigdstport a DNAT ELOTTI (publikalt) portra illeszkedik: a DOCKER-USER
+    lanc a DNAT utan fut, ott a --dport mar a kontener belso portjat latna.
+    A --ctdir ORIGINAL nelkul a kontener VALASZAT is eldobnank. #}
+-A DOCKER-USER -p tcp -m conntrack --ctorigdstport {{ r.port }} --ctdir ORIGINAL -j DROP
+{% endfor %}
+-A DOCKER-USER -j RETURN
+COMMIT

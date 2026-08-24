@@ -1,0 +1,15 @@
+---
+# Az InitInfra fo playbookja. PULL modellben fut: a CELGEPEN inditod,
+# nem tavolrol. A hivas mindig:
+#
+#   ansible-playbook -i localhost, -c local site.yml
+#
+# vagy egyszerubben: make dev
+- name: InitInfra - futtatokornyezet felepitese
+  hosts: all
+  become: true
+  roles:
+    - role: base
+      tags: [base]
+    - role: docker
+      tags: [docker]
