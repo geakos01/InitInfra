@@ -12,14 +12,17 @@
 > olvasni** — plusz a [DESIGN.md](DESIGN.md)-t (mit építünk és miért) és a
 > [ROADMAP.md](ROADMAP.md)-t (milyen sorrendben).
 
-**Hol tartunk:** a ROADMAP **0–7. fázisa kész**. A teljes stack — mind a 15
-szolgáltatás — **Ansible-ből épül**, a playbook `ok=45, changed=0`, a `make verify`
-**29/29 zöld**, és a `bootstrap.sh` egyetlen `curl | bash` paranccsal végigviszi
-az egészet.
+**Hol tartunk:** a ROADMAP **0–8. fázisa kész**. Egy szűz Ubuntu 24.04-ből
+**egyetlen paranccsal** áll a teljes stack, és ez **két egymást követő friss VM-en**
+végigment: 10-11 perc, `ok=56, changed=35`, verify **28/28**, kilépési kód 0.
 
-**Következő a 8. fázis:** a nulláról-próba. Eldobjuk a VM-et, friss gépen csak a
-bootstrap URL-jét futtatjuk — és ezt **kétszer**. Az első sikeres futás gyakran
-szerencse; a második mondja meg, hogy reprodukálható.
+```bash
+curl -fsSL https://raw.githubusercontent.com/geakos01/InitInfra/main/bootstrap.sh | sudo bash
+```
+
+**Következő a 9. fázis: az igazi gép.** A Rackforest szerveren ugyanez az egy parancs.
+Utána jön az ügyfélkód a `/opt/app`-ba, és ha kell, a felületek publikálása
+(`publish_web_ui` + `allowed_ips` a `group_vars/<gép>.yml`-ben).
 
 ### A repó
 
@@ -59,6 +62,9 @@ scheduler,dag-processor,triggerer}`, `jupyter`, `api`, `prometheus`, `grafana`,
 
 Kívülről **egyedül a `8000`** (API) érhető el — a hét admin port zárt. 6/6 Prometheus
 target UP.
+
+Frissen telepített gépen **14 szolgáltatás** fut: az `api` addig kimarad, amíg az
+ügyfél kódja nincs a `/opt/app`-ban. Ilyenkor a verify 28/28, kóddal 29/29.
 
 ### Amire figyelni kell
 
@@ -659,3 +665,91 @@ után `make dev` ugyanúgy `ok=45, changed=0`, és fordítva is.
 
 Amit a bootstrap **még nem** bizonyított: hogy egy szűz gépen is végigmegy. Az a
 8. fázis, és az az igazi teszt.
+
+---
+
+## 2026-08-25 (2) — A 8. fázis kész: nulláról, hat friss VM-en
+
+### Mi történt
+
+Hat friss VM, mindegyiken **egyetlen parancs**, semmi kézi beavatkozás:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/geakos01/InitInfra/main/bootstrap.sh | sudo bash
+```
+
+A végleges kód **két egymást követő szűz gépen** ment végig hibátlanul:
+
+| | 1. kör | 2. kör |
+|---|---|---|
+| Idő | 11 perc 21 mp | 9 perc 51 mp |
+| Playbook | `ok=56, changed=35` | `ok=56, changed=35` |
+| Verify | 28/28 | 28/28 |
+| Kilépési kód | 0 | 0 |
+
+A két futás `PLAY RECAP`-je **karakterre azonos**. Utána a gépen `make dev` →
+`changed=0`, újraindítás után 30 másodperccel újra 28/28.
+
+### A négy hiba, amit csak a nulláról-próba talált meg
+
+Egyik sem látszott a fejlesztői gépen, mert ott már minden a helyén volt.
+
+**1. A verify feltételezte, hogy az ügyfél kódja már ott van.** Üres `/opt/app`
+mellett az `uvicorn` `ModuleNotFoundError`-ral elszáll, a `restart: unless-stopped`
+pedig **örökké újraindítja**. Egy végtelenül újrainduló konténer pont akkor teszi
+használhatatlanná a „minden szolgáltatás fut" ellenőrzést, amikor a legtöbbet érné:
+közvetlenül telepítés után.
+
+A javítás nem a verify-ban van, hanem eggyel feljebb: az `api` szolgáltatás **be sem
+kerül a compose fájlba**, amíg nincs kód a helyén — és a playbook ezt ki is mondja.
+A verify pedig nem a szándékból (`api_enabled`) indul ki, hanem a **ténylegesen
+legenerált** compose-ból: `docker compose config --services`. Így a kettő nem tud
+elcsúszni egymástól.
+
+**2. Egy elszakadt kapcsolat eldöntötte az egész telepítést.** A második körben a
+229. megabájtnál:
+
+```
+failed to copy: read tcp …->18.172.242.124:443: read: connection reset by peer
+```
+
+Több gigabájt image letöltésénél ez nem kivétel, hanem a normális működés része. A
+`docker build` és a `docker compose up` mostantól **háromszor próbálkozik**. A Docker
+rétegenként gyorsítótáraz, tehát az újrapróbálkozás onnan folytatja, ahol abbahagyta —
+és ezt élőben is láttuk: a félbemaradt telepítés a következő futásban `changed=1`-gyel
+befejeződött.
+
+**3. A playbook „kész"-t jelentett, mielőtt a stack működött volna.** A
+`docker compose up -d` visszatérése csak annyit jelent, hogy a konténerek
+**elindultak**. Az Airflow ilyenkor még lefuttatja a db-migrációt és az első ütemezői
+kört: friss gépen fél–két perc. Emiatt a bootstrap záró ellenőrzése **pirosat írt egy
+tökéletesen jó gépre**.
+
+A playbook mostantól megvárja, hogy mind a négy komponens `healthy` legyen. A
+végleges futásban ez hat újrapróbálkozás volt — pontosan az a fél perc, ami korábban
+elrontotta. Egy telepítőnek azt kell jelentenie, hogy a rendszer **működik**, nem azt,
+hogy a konténereket létrehoztuk.
+
+**4. A bootstrap után a `git pull` megtagadta a működést.** A repót root klónozza, a
+git 2.35 óta pedig idegen tulajdonú repóban `dubious ownership`-pel elhasal. A
+dokumentált fejlesztői út (`git pull && make dev` a saját felhasználóval) tehát
+**pont a telepítés után** tört el. A bootstrap most átadja a repót a `$SUDO_USER`-nek.
+
+### Egy ötödik, ami a bootstrapből jött
+
+A jelszavakat a `password` lookup állítja elő, ami a **vezérlő gépen** fut — vagyis
+az `ansible`-t indító felhasználó nevében. Ez a bootstrapben root, kézzel viszont
+`ubuntu`. Egy root-ként létrehozott `0600`-as titkot az `ubuntu` később nem tudott
+volna visszaolvasni: a következő `make dev` `Permission denied`-del állt volna meg egy
+addig működő gépen. A `secrets.yml` most minden futás végén egységesíti a tulajdonost.
+
+### Amit a nulláról-próbáról érdemes megjegyezni
+
+**Az első sikeres futás nem bizonyít semmit.** Az első tiszta körünk 7,5 perc alatt
+zölden végigment — a második ugyanazzal a kóddal elhasalt. Nem a kód változott, hanem
+a hálózat. Ha csak egyszer futtattuk volna, ma is azt hinnénk, hogy kész vagyunk, és
+az első ügyfélnél derült volna ki.
+
+**A hibák fele nem a telepítésben volt, hanem abban, hogy mit jelentünk késznek.**
+A 2., 3. és 4. pont mind erről szól: a telepítő túl korán mondta, hogy kész, vagy
+olyat ellenőrzött, ami még nem lehetett igaz.
