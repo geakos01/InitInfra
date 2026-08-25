@@ -229,3 +229,25 @@
   delay: 5
   changed_when: false
   tags: [stack]
+
+# A "docker compose up -d" visszaterese csak annyit jelent, hogy a kontenerek
+# ELINDULTAK - nem azt, hogy mukodnek. Az Airflow apiserver ilyenkor meg
+# lefuttatja a db migraciot es az elso utemezoi kort: friss gepen 1-2 perc.
+#
+# Enelkul a bootstrap zaro ellenorzese PIROSAT IR EGY TOKELETESEN JO GEPRE -
+# nullarol-probanal pontosan ez tortent. A playbooknak azt kell jelentenie,
+# hogy a stack MUKODIK, nem azt, hogy a kontenereket letrehoztuk.
+#
+# Mind a negy komponenst megvarjuk: az apiserver akkor is valaszol, amikor az
+# utemezo meg nem all - ilyenkor a valasz "unhealthy"-t tartalmaz.
+- name: Varakozas az Airflow-ra
+  ansible.builtin.command:
+    cmd: curl -sf http://127.0.0.1:{{ airflow_web_port }}/api/v2/monitor/health
+  register: airflow_kesz
+  until: >-
+    airflow_kesz.rc == 0 and
+    (airflow_kesz.stdout | regex_findall('"status":"healthy"') | length) == 4
+  retries: 36
+  delay: 5
+  changed_when: false
+  tags: [stack]
