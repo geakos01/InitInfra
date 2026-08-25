@@ -56,8 +56,11 @@ verify_ellenorzesek:
     ha: "{{ not publish_web_ui }}"
 
   # --- Docker ---------------------------------------------------------------
+  # Go-sablont (a docker --format kapcsolojat) szandekosan nem hasznalunk
+  # sehol: a {{ }} az Ansible-nek is Jinja, es a valtozo-behelyettesites
+  # tobbszor is lefut az elem eleteben - a {% raw %} csak az elsot allitja meg.
   - nev: "Docker: a daemon fut"
-    parancs: docker info --format '{% raw %}{{ .ServerVersion }}{% endraw %}'
+    parancs: systemctl is-active --quiet docker && docker info > /dev/null
 
   - nev: "Docker: a felhasznalok tagjai a docker csoportnak"
     parancs: for u in {{ docker_users | join(' ') }}; do id -nG "$u" | grep -qw docker || exit 1; done
