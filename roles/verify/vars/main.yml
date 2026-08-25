@@ -114,10 +114,14 @@ verify_ellenorzesek:
   - nev: "Airflow: a webes felulet valaszol"
     parancs: curl -sf -o /dev/null http://127.0.0.1:{{ airflow_web_port }}/
 
+  # Frissen telepitett gepen meg EGYETLEN DAG SINCS, es ilyenkor az Airflow ki
+  # sem irja ezt a metrikat. A hianya tehat nem hiba - csak a nullanal nagyobb
+  # ertek az. Ezert nem a "0"-t keressuk, hanem azt tiltjuk, hogy 1-9-cel
+  # kezdodo szam alljon ott.
   - nev: "Airflow: nincs DAG import hiba"
     parancs: >-
-      docker compose exec -T prometheus wget -qO- http://statsd-exporter:9102/metrics
-      | grep -q '^airflow_dag_processing_import_errors 0$'
+      ! docker compose exec -T prometheus wget -qO- http://statsd-exporter:9102/metrics
+      | grep -qE '^airflow_dag_processing_import_errors [1-9]'
 
   # --- Megfigyeles ----------------------------------------------------------
   # Ez az egyetlen ellenorzes, ami a legtobb csendes hibat kifogja: ha barmelyik
@@ -169,4 +173,4 @@ verify_ellenorzesek:
 
   - nev: "API: a {{ api_port }} porton hallgat"
     parancs: ss -ltnH | awk '{print $4}' | grep -qE ':{{ api_port }}$'
-    ha: "{{ api_enabled }}"
+    ha: "{{ api_definialva }}"

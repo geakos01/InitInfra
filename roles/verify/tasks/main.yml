@@ -13,6 +13,21 @@
   ansible.builtin.set_fact:
     verify_eredmeny: []
 
+# Az "api" szolgaltatas csak akkor kerul a compose fajlba, ha az ugyfel kodja
+# mar ott van a gepen (lasd roles/stack/tasks/main.yml). Az ellenorzes ezert
+# nem a szandekbol (api_enabled) indul ki, hanem abbol, ami tenylegesen
+# generalodott - igy a ketto sosem tud elcsuszni egymastol.
+- name: Mely szolgaltatasok vannak definialva
+  ansible.builtin.command:
+    cmd: docker compose config --services
+    chdir: "{{ stack_dir }}"
+  register: compose_szolgaltatasok
+  changed_when: false
+
+- name: Az api szolgaltatas allapota
+  ansible.builtin.set_fact:
+    api_definialva: "{{ 'api' in compose_szolgaltatasok.stdout_lines }}"
+
 - name: A szolgaltatasok ellenorzese
   ansible.builtin.include_tasks: ellenoriz.yml
   loop: "{{ verify_ellenorzesek }}"

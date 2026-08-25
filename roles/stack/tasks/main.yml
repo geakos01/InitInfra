@@ -19,6 +19,38 @@
     - "{{ app_dir }}/dags"
   tags: [stack]
 
+# Az API kodja NEM az InitInfra resze: az ugyfel repojabol kerul a helyere, a
+# telepites UTAN (ROADMAP 9. fazis). Amig nincs ott, az "api" szolgaltatast el
+# sem inditjuk.
+#
+# Miert nem: kod nelkul az uvicorn "ModuleNotFoundError"-ral elszall, a
+# "restart: unless-stopped" pedig orokke ujrainditja. Egy vegtelenul
+# ujrainduló kontener elrejti az igazi hibakat - a "minden szolgaltatas fut"
+# ellenorzes pont akkor valna hasznalhatatlanna, amikor a legtobbet erne.
+#
+# A "dags" konyvtart mi magunk hozzuk letre, ezert az nem szamit kodnak.
+- name: Van-e mar ugyfelkod a {{ app_dir }}-ban
+  ansible.builtin.find:
+    paths: "{{ app_dir }}"
+    file_type: any
+    excludes: ["dags"]
+  register: app_tartalom
+  changed_when: false
+  tags: [stack]
+
+- name: Az api szolgaltatas sorsa
+  ansible.builtin.set_fact:
+    api_indithato: "{{ api_enabled and app_tartalom.matched | int > 0 }}"
+  tags: [stack]
+
+- name: Az api szolgaltatas most kimarad
+  ansible.builtin.debug:
+    msg: >-
+      A(z) {{ app_dir }} meg ures, ezert az "api" szolgaltatas kimarad a
+      stackbol. Tedd oda az ugyfel kodjat, majd futtasd ujra a "make dev"-et.
+  when: api_enabled and not api_indithato
+  tags: [stack]
+
 # Ezeket az Airflow konteneret futtato UID birtokolja, NEM a docker felhasznalo.
 # Ha a docker felhasznalonak adnank, chown-pingpong lenne belole: az Ansible
 # atirna 1000-re, az airflow-init vissza 50000-re, es minden futas "changed"
