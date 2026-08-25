@@ -15,3 +15,10 @@
       tags: [docker]
     - role: stack
       tags: [stack]
+
+    # A "never" cimke miatt ez a szerepkor a "make dev"-ben NEM fut le - csak
+    # akkor, ha kifejezetten kered: make verify. Igy az epites es az
+    # ellenorzes ugyanabbol a valtozokeszletbol dolgozik (ugyanazok a portok,
+    # ugyanazok az adatbazisnevek), de kulon parancs inditja oket.
+    - role: verify
+      tags: [never, verify]

@@ -1,0 +1,168 @@
+---
+# ---------------------------------------------------------------------------
+# Az ellenorzesek listaja.
+#
+# Mindegyik egy hejparancs: 0 kilepesi kod = jo. Ahol a "nincs talalat" a jo
+# valasz, ott a parancs "!"-lel kezdodik (ilyenkor YAML-ben idezojel kell,
+# mert a "!" onmagaban YAML-cimke).
+#
+# Minden parancs a stack_dir-bol fut, ezert a "docker compose" megtalalja a
+# .env-et, es a szolgaltatasokat a nevukon lehet hivni - nem kell tudni, hogy
+# a kontener neve initinfra-postgres-1 vagy mas.
+#
+# EZEK NEM ELMELETI ELLENORZESEK: mindegyik parancs kezzel le lett futtatva a
+# fejlesztoi VM-en, es a kimenete meg van nezve. Ha uj szolgaltatas kerul a
+# stackbe, ide is kerul melle egy sor.
+# ---------------------------------------------------------------------------
+
+verify_ellenorzesek:
+
+  # --- Gep-higienia (base szerepkor) ---------------------------------------
+  - nev: "Rendszer: idozona"
+    parancs: test "$(timedatectl show -p Timezone --value)" = '{{ timezone }}'
+
+  - nev: "Rendszer: swap aktiv"
+    parancs: swapon --show | grep -q swapfile
+
+  - nev: "Rendszer: swappiness"
+    parancs: test "$(sysctl -n vm.swappiness)" = '{{ swappiness }}'
+
+  - nev: "Rendszer: az apt idokorlatja es a pipelining kikapcsolasa"
+    parancs: apt-config dump | grep -q 'Acquire::http::Pipeline-Depth "0"'
+
+  - nev: "Rendszer: automatikus biztonsagi frissites"
+    parancs: systemctl is-enabled unattended-upgrades
+
+  # --- Tuzfal ---------------------------------------------------------------
+  - nev: "Tuzfal: az ufw aktiv"
+    parancs: ufw status | grep -q 'Status: active'
+
+  - nev: "Tuzfal: az SSH port engedelyezve ({{ ssh_port }})"
+    parancs: ufw status | grep -q '^{{ ssh_port }}/tcp'
+
+  - nev: "Tuzfal: a fail2ban figyeli az sshd-t"
+    parancs: fail2ban-client status sshd | grep -q 'Currently failed'
+
+  - nev: "Tuzfal: a DOCKER-USER lanc letezik"
+    parancs: iptables -S DOCKER-USER | grep -q -- '-N DOCKER-USER'
+
+  # A Docker kozvetlenul az iptables FORWARD lancaba ir, az ufw ele. Ha egy
+  # kontener-port 0.0.0.0-n hallgat, azt az ufw NEM szuri - ezert
+  # alapertelmezesben mindegyik admin portnak loopbackon kell lennie.
+  - nev: "Tuzfal: az admin portok csak loopbackon hallgatnak"
+    parancs: >-
+      ! ss -ltnH | awk '{print $4}'
+      | grep -qE '^(0\.0\.0\.0|\*|\[::\]):({{ airflow_web_port }}|{{ grafana_port }}|{{ prometheus_port }}|{{ jupyter_port }}|{{ cadvisor_port }}|5432|6379)$'
+    ha: "{{ not publish_web_ui }}"
+
+  # --- Docker ---------------------------------------------------------------
+  - nev: "Docker: a daemon fut"
+    parancs: docker info --format '{% raw %}{{ .ServerVersion }}{% endraw %}'
+
+  - nev: "Docker: a felhasznalok tagjai a docker csoportnak"
+    parancs: for u in {{ docker_users | join(' ') }}; do id -nG "$u" | grep -qw docker || exit 1; done
+
+  # Egyetlen ellenorzes az egesz stackre: minden szolgaltatas fut, egyik sem
+  # unhealthy, es az egyszer lefuto airflow-init 0-val allt le.
+  - nev: "Docker: minden szolgaltatas fut es egeszseges"
+    parancs: |
+      docker compose ps -a --format json | python3 -c '
+      import sys, json
+      rossz = []
+      for sor in sys.stdin:
+          k = json.loads(sor)
+          if k["Service"] == "airflow-init":
+              if k["ExitCode"] != 0:
+                  rossz.append(k["Service"] + "=exit" + str(k["ExitCode"]))
+              continue
+          if k["State"] != "running" or k["Health"] == "unhealthy":
+              rossz.append(k["Service"] + "=" + k["State"] + "/" + (k["Health"] or "-"))
+      print(" ".join(rossz) if rossz else "mind fut")
+      sys.exit(1 if rossz else 0)
+      '
+
+  # --- Postgres es Redis ----------------------------------------------------
+  - nev: "Postgres: a(z) {{ pg_airflow_db }} adatbazis fogad kapcsolatot"
+    parancs: docker compose exec -T postgres psql -U {{ pg_airflow_user }} -d {{ pg_airflow_db }} -tAc 'select 1' | grep -q '^1$'
+
+  - nev: "Postgres: a(z) {{ pg_app_db }} adatbazis fogad kapcsolatot"
+    parancs: docker compose exec -T postgres psql -U {{ pg_app_user }} -d {{ pg_app_db }} -tAc 'select 1' | grep -q '^1$'
+
+  - nev: "Redis: valaszol"
+    parancs: docker compose exec -T redis redis-cli ping | grep -q PONG
+
+  # A Redis szandekosan felejt: a session historyt a Python epiti ujra a
+  # Postgresbol. Ha ez a ket ertek elcsuszik, a gep tobbet igerne, mint amit
+  # tud - vagy lassabb lenne a kelletenel.
+  - nev: "Redis: a kilakoltatasi szabaly allkeys-lru"
+    parancs: docker compose exec -T redis redis-cli config get maxmemory-policy | grep -qx allkeys-lru
+
+  - nev: "Redis: nincs perzisztencia (appendonly no)"
+    parancs: docker compose exec -T redis redis-cli config get appendonly | grep -qx no
+
+  # --- Airflow --------------------------------------------------------------
+  # Mind a negy komponens kulon sorban jelenti magat. Ha barmelyik hallgat,
+  # az a sor "unhealthy" lesz - ezert kell pontosan negy "healthy".
+  - nev: "Airflow: mind a negy komponens egeszseges"
+    parancs: >-
+      test "$(curl -sf http://127.0.0.1:{{ airflow_web_port }}/api/v2/monitor/health
+      | grep -o '"status":"healthy"' | wc -l)" = 4
+
+  - nev: "Airflow: a webes felulet valaszol"
+    parancs: curl -sf -o /dev/null http://127.0.0.1:{{ airflow_web_port }}/
+
+  - nev: "Airflow: nincs DAG import hiba"
+    parancs: >-
+      docker compose exec -T prometheus wget -qO- http://statsd-exporter:9102/metrics
+      | grep -q '^airflow_dag_processing_import_errors 0$'
+
+  # --- Megfigyeles ----------------------------------------------------------
+  # Ez az egyetlen ellenorzes, ami a legtobb csendes hibat kifogja: ha barmelyik
+  # exporter elszallt vagy rossz porton figyel, itt derul ki.
+  - nev: "Prometheus: minden target UP"
+    parancs: |
+      curl -sf 'http://127.0.0.1:{{ prometheus_port }}/api/v1/targets?state=active' | python3 -c '
+      import sys, json
+      t = json.load(sys.stdin)["data"]["activeTargets"]
+      rossz = [x["labels"]["job"] + "=" + x["health"] for x in t if x["health"] != "up"]
+      print(" ".join(rossz) if rossz else str(len(t)) + "/" + str(len(t)) + " UP")
+      sys.exit(1 if (rossz or not t) else 0)
+      '
+
+  - nev: "Grafana: valaszol es latja az adatbazisat"
+    parancs: curl -sf http://127.0.0.1:{{ grafana_port }}/api/health | grep -q '"database": "ok"'
+
+  - nev: "Grafana: a Prometheus adatforras be van allitva"
+    parancs: >-
+      . ./.env && curl -sf -u "{{ grafana_admin_user }}:$GRAFANA_ADMIN_PASSWORD"
+      http://127.0.0.1:{{ grafana_port }}/api/datasources | grep -q '"type":"prometheus"'
+
+  - nev: "statsd: az Airflow metrikai megerkeznek"
+    parancs: >-
+      test "$(docker compose exec -T prometheus wget -qO- http://statsd-exporter:9102/metrics
+      | grep -c '^# TYPE airflow')" -ge 20
+
+  # Az Airflow a dag_id-t es a task_id-t a metrika NEVEBE teszi. Lekepezes
+  # nelkul minden uj DAG uj metrikaneveket szul, es a Prometheus elfogy.
+  # Egeszseges gepen ez a szam ~43 es allando; ha szazakban jar, a lekepezes
+  # nem fog.
+  - nev: "statsd: a metrikanevek nem robbannak (200 alatt)"
+    parancs: >-
+      test "$(docker compose exec -T prometheus wget -qO- http://statsd-exporter:9102/metrics
+      | grep -c '^# TYPE airflow')" -lt 200
+
+  # --- Jupyter es az API ----------------------------------------------------
+  - nev: "Jupyter: token nelkul nem enged be"
+    parancs: >-
+      test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:{{ jupyter_port }}/api/contents)" = 403
+    ha: "{{ jupyter_enabled }}"
+
+  - nev: "Jupyter: tokennel bejutunk"
+    parancs: >-
+      . ./.env && test "$(curl -s -o /dev/null -w '%{http_code}'
+      "http://127.0.0.1:{{ jupyter_port }}/api/contents?token=$JUPYTER_TOKEN")" = 200
+    ha: "{{ jupyter_enabled }}"
+
+  - nev: "API: a {{ api_port }} porton hallgat"
+    parancs: ss -ltnH | awk '{print $4}' | grep -qE ':{{ api_port }}$'
+    ha: "{{ api_enabled }}"

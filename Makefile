@@ -2,13 +2,16 @@
 PLAYBOOK := site.yml
 ANSIBLE  := ansible-playbook -i localhost, -c local
 
-.PHONY: help dev check diff lint idempotens
+.PHONY: help dev verify check diff lint idempotens
 
 help:  ## Ezt a listat mutatja
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | sed -e 's/:.*## /|/' | column -t -s '|'
 
 dev:  ## A playbook futtatasa helyben (ez a fo parancs)
 	$(ANSIBLE) $(PLAYBOOK)
+
+verify:  ## Ellenorzi, hogy a gep keszen all-e (nem valtoztat semmit)
+	$(ANSIBLE) --tags verify $(PLAYBOOK)
 
 check:  ## Szarazon futtatas - nem valtoztat semmit
 	$(ANSIBLE) --check --diff $(PLAYBOOK)

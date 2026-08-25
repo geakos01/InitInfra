@@ -1,0 +1,41 @@
+---
+# ---------------------------------------------------------------------------
+# verify - "jo-e a gep?"
+#
+# Nem valtoztat semmit. Minden ellenorzes lefut, meg akkor is, ha egy korabbi
+# elbukott - a vegen egyben lathato, mi rossz. Ez szandekos: egy elso hibanal
+# megallo ellenorzes csak az elso problemat mutatja meg, es a tobbit elrejti.
+#
+# Futtatas:  make verify
+# ---------------------------------------------------------------------------
+
+- name: Az eredmenylista inditasa
+  ansible.builtin.set_fact:
+    verify_eredmeny: []
+
+- name: A szolgaltatasok ellenorzese
+  ansible.builtin.include_tasks: ellenoriz.yml
+  loop: "{{ verify_ellenorzesek }}"
+  loop_control:
+    loop_var: ellenorzes
+    label: "{{ ellenorzes.nev }}"
+  when: ellenorzes.ha | default(true) | bool
+
+# A DOCKER-USER szabalyok ellenorzese abbol jon, amit a group_vars ker.
+# Ures listanal (alapertelmezes: minden admin felulet loopbackon) nincs mit
+# ellenorizni, es ez a resz kimarad.
+- name: A DOCKER-USER szuresek ellenorzese
+  ansible.builtin.include_tasks: ellenoriz.yml
+  loop: "{{ docker_user_rules }}"
+  loop_control:
+    loop_var: szabaly
+    label: "DOCKER-USER {{ szabaly.port }}"
+  vars:
+    ellenorzes:
+      nev: "Tuzfal: a DOCKER-USER szuri a {{ szabaly.port }} portot"
+      parancs: >-
+        test "$(iptables -S DOCKER-USER | grep -c -- '--ctorigdstport {{ szabaly.port }} ')"
+        = {{ szabaly.allowed_ips | length + 1 }}
+
+- name: Az osszegzes
+  ansible.builtin.include_tasks: 99-osszegzes.yml

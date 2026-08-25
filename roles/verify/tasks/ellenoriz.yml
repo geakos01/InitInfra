@@ -1,0 +1,34 @@
+---
+# Egyetlen ellenorzes lefuttatasa es az eredmeny rogzitese.
+#
+# A szerzodes egyszeru: a parancs kilepesi kodja donti el az eredmenyt.
+# 0 = jo, barmi mas = hiba. Ahol a "nincs talalat" a jo valasz, ott a parancs
+# elejere "!" kerul - a hejnak ez ugyanugy 0-t ad vissza.
+#
+# Egyik ellenorzes sem szakitja meg a futast (failed_when: false): mindegyik
+# lefut, es a 99-osszegzes.yml irja ki egyben, mi bukott el.
+
+- name: "{{ ellenorzes.nev }}"
+  ansible.builtin.shell:
+    cmd: "{{ ellenorzes.parancs }}"
+    chdir: "{{ stack_dir }}"
+    executable: /bin/bash
+  register: e_futas
+  failed_when: false
+  changed_when: false
+
+# A kimenet elso sora eleg a hibakereses elinditasahoz - a teljes kimenetet
+# nem irjuk ki, mert titkot is tartalmazhat (pl. a .env-bol sourceolt jelszo
+# hibauzenetben).
+- name: Az eredmeny rogzitese
+  ansible.builtin.set_fact:
+    verify_eredmeny: >-
+      {{ verify_eredmeny + [{
+           'nev': ellenorzes.nev,
+           'ok': e_futas.rc == 0,
+           'sor': ('[  OK  ] ' if e_futas.rc == 0 else '[ HIBA ] ') ~ ellenorzes.nev
+                  ~ ('' if e_futas.rc == 0 else
+                     '   -> rc=' ~ e_futas.rc ~ ' '
+                     ~ ((e_futas.stdout_lines | default([]) + e_futas.stderr_lines | default([]))
+                        | first | default('(nincs kimenet)')) | truncate(80, true))
+         }] }}

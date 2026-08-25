@@ -1,0 +1,22 @@
+---
+# Az eredmenyek egyben.
+#
+# Az Ansible sajat kimeneteben minden ellenorzes "ok"-nak latszik (a hibat a
+# kilepesi kodbol mi ertekeljuk ki), ezert az igazi jelentes ez a blokk.
+
+- name: A jelentes
+  ansible.builtin.debug:
+    msg: "{{ verify_eredmeny | map(attribute='sor') | list }}"
+
+- name: Osszesites
+  ansible.builtin.debug:
+    msg: >-
+      {{ verify_eredmeny | selectattr('ok') | list | length }} / {{ verify_eredmeny | length }}
+      ellenorzes rendben.
+
+- name: A gep nem all keszen
+  ansible.builtin.fail:
+    msg: >-
+      {{ verify_eredmeny | rejectattr('ok') | list | length }} ellenorzes elbukott:
+      {{ verify_eredmeny | rejectattr('ok') | map(attribute='nev') | list | join(' | ') }}
+  when: verify_eredmeny | rejectattr('ok') | list | length > 0
