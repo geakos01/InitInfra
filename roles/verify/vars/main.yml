@@ -35,7 +35,7 @@ verify_ellenorzesek:
 
   # --- Tuzfal ---------------------------------------------------------------
   - nev: "Tuzfal: az ufw aktiv"
-    parancs: ufw status | grep -q 'Status: active'
+    parancs: "ufw status | grep -q 'Status: active'"
 
   - nev: "Tuzfal: az SSH port engedelyezve ({{ ssh_port }})"
     parancs: ufw status | grep -q '^{{ ssh_port }}/tcp'
@@ -130,7 +130,8 @@ verify_ellenorzesek:
       '
 
   - nev: "Grafana: valaszol es latja az adatbazisat"
-    parancs: curl -sf http://127.0.0.1:{{ grafana_port }}/api/health | grep -q '"database": "ok"'
+    parancs: >-
+      curl -sf http://127.0.0.1:{{ grafana_port }}/api/health | grep -q '"database": "ok"'
 
   - nev: "Grafana: a Prometheus adatforras be van allitva"
     parancs: >-
