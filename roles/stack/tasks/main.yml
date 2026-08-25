@@ -13,12 +13,26 @@
   loop:
     - "{{ stack_dir }}"
     - "{{ stack_dir }}/initdb"
-    - "{{ stack_dir }}/config"
-    - "{{ stack_dir }}/plugins"
     - "{{ app_dir }}"
     # A DAG-ok a modellkodbol jonnek, amit git pull frissit. Az InitInfra csak
     # a konyvtarat hozza letre - a tartalom az ugyfele.
     - "{{ app_dir }}/dags"
+  tags: [stack]
+
+# Ezeket az Airflow konteneret futtato UID birtokolja, NEM a docker felhasznalo.
+# Ha a docker felhasznalonak adnank, chown-pingpong lenne belole: az Ansible
+# atirna 1000-re, az airflow-init vissza 50000-re, es minden futas "changed"
+# lenne - vegtelen ciklusban, sosem idempotensen.
+- name: Az Airflow altal irt konyvtarak
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ airflow_uid }}"
+    group: "0"
+    mode: "0755"
+  loop:
+    - "{{ stack_dir }}/config"
+    - "{{ stack_dir }}/plugins"
   tags: [stack]
 
 # --- Az app image ----------------------------------------------------------
