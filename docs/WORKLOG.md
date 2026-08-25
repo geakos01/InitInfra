@@ -13,7 +13,7 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1-4. fázisa is KÉSZ**.
+1-6. fázisa is KÉSZ**.
 
 Az 1. fázisban kézzel felépült mind a 15 szolgáltatás (a jegyzet:
 [manual-install.md](manual-install.md)). A 2. fázisban megszületett az **Ansible váz**,
@@ -23,11 +23,11 @@ Az 1. fázisban kézzel felépült mind a 15 szolgáltatás (a jegyzet:
 A 3. fázisban megszületett a **`stack` szerepkör**: Postgres két adatbázissal és
 Redis, a titkok idempotens kezelésével. A teljes playbook `ok=34, changed=0`.
 
-A 4. fázisban az `app` image és az Airflow négy komponense is Ansible-ből épül.
-Bizonyítva: egy valódi DAG végigfutott rajta (3/3 task), a torch, a pandas és a
-Postgres-kapcsolat mind működik a task környezetében.
+**Mind a 15 szolgáltatás Ansible-ből épül.** A teljes playbook `ok=43, changed=0`.
+Bizonyítva: valódi DAG-futás (3/3 task), 6/6 Prometheus target UP, és websocket-forgalom
+végigment az API-n Postgresbe és Redisbe.
 
-**Következő az 5. fázis:** observability — Prometheus, Grafana és az öt exporter.
+**Következő a 7. fázis:** a `bootstrap.sh` és a `make verify`.
 
 **Mi van kész:**
 
@@ -72,8 +72,9 @@ Postgres-kapcsolat mind működik a task környezetében.
 
 **Mi a következő teendő:**
 
-Az **5. fázis**: observability. A működő Prometheus-konfig és a 19 szabályos statsd
-mapping a `stack/prometheus/` alatt van — a fordítás nagyrészt másolás és sablonosítás.
+A **7. fázis**: a `bootstrap.sh` (a `curl | bash` belépési pont) és a `make verify`.
+A ROADMAP 7. fázisánál ott van, mit kell a bootstrapnek kezelnie — mindegyik pontba
+bele is futottunk a 2. fázis nulláról-próbáján.
 
 Amit a 2. fázisnak külön észben kell tartania (a jegyzetből):
 
@@ -561,3 +562,37 @@ tulajdonost állítsa be, amit az Airflow vár.
 Ez utóbbi jó példa arra, miért nem elég a „lefutott hibátlanul" mérce. A playbook
 `failed=0`-t írt, minden szolgáltatás `healthy` volt — a hiba csak a `--diff`
 kimenetéből derült ki.
+
+---
+
+## 2026-08-25 (3) — Az 5. és 6. fázis kész: a teljes stack Ansible-ből
+
+### Mi történt
+
+Observability (Prometheus, Grafana, öt exporter), majd Jupyter és az `api`. Ezzel
+**mind a 15 szolgáltatás Ansible-ből épül**, a teljes playbook `ok=43, changed=0`.
+
+Az ellenőrzés nem állt meg a konténer-státusznál:
+
+| | |
+|---|---|
+| Prometheus | 6/6 target UP, 152 Airflow-metrika |
+| statsd mapping | 55 metrikanév, **0 beégetett azonosítóval** |
+| Jupyter | 403 token nélkül, 200 tokennel |
+| API kívülről | `postgres:true, redis:true` |
+| Websocket | 5 üzenet → 3 Redisbe, 5 sor Postgresbe |
+| Admin portok (7) | mind zárt kívülről |
+
+### Amit menet közben bekötöttünk
+
+A `DOCKER-USER` lánc eddig **mindig üres volt**: a `docker_user_rules` változó
+sosem töltődött fel, tehát a tervben leírt IP-szűrés papíron létezett, de nem lépett
+volna működésbe. Mostantól a `publish_web_ui` + `allowed_ips` és az `api_allowed_ips`
+változókból áll elő.
+
+### A 4. fázis chown-pingpongja itt is visszaköszönt
+
+A Jupyternél ugyanaz a csapda: a named volume célkönyvtárát (`/opt/notebooks`,
+`/home/airflow/.jupyter`) **az image-ben kell létrehozni** a helyes tulajdonossal,
+különben a Docker `root:root`-ként csinálja meg, és a konténer nem tud beleírni. Ez a
+Dockerfile sablonjába került, `{{ airflow_uid }}`-vel.
