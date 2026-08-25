@@ -1,0 +1,19 @@
+---
+# --- Verziok. Minden pinnelve, "latest" sehol. -----------------------------
+postgres_image: postgres:16
+redis_image: redis:7.2
+
+# --- Adatbazisok -----------------------------------------------------------
+pg_airflow_db: airflow
+pg_airflow_user: airflow
+pg_app_db: app
+pg_app_user: app
+
+# --- Redis -----------------------------------------------------------------
+# Szandekosan nincs perzisztencia: a session historyt a Python ujraepiti a
+# Postgresbol. Ezert save "", appendonly no, es allkeys-lru.
+redis_maxmemory: 512mb
+
+# --- Eroforras-korlatok ----------------------------------------------------
+# A dev VM 8 GB, az eles gep akar 32 GB. NE drotozd be.
+scheduler_mem_limit: 3g

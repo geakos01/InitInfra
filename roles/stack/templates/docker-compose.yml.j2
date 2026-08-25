@@ -1,0 +1,63 @@
+# Az Ansible generalja - KEZZEL NE SZERKESZD, minden futasnal felulirodik.
+# Forras: roles/stack/templates/docker-compose.yml.j2
+name: initinfra
+
+services:
+  postgres:
+    image: {{ postgres_image }}
+    restart: unless-stopped
+    environment:
+      # Az Airflow metadata DB-jet a postgres image maga hozza letre
+      POSTGRES_DB: ${POSTGRES_AIRFLOW_DB}
+      POSTGRES_USER: ${POSTGRES_AIRFLOW_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_AIRFLOW_PASSWORD}
+      # Az alkalmazas DB-jet az initdb szkript, ezekbol
+      APP_DB: ${POSTGRES_APP_DB}
+      APP_USER: ${POSTGRES_APP_USER}
+      APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Loopback: a Docker igy kifele NEM publikalja. Ez az, ami tenylegesen
+      # ved - nem az ufw, amit a Docker megkerulne.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # A $$ nem elgepeles: a compose kulonben sajat maga helyettesitene be a
+      # ${...}-t a .env-bol. Igy a kontenerbeli shell oldja fel, futasidoben.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_AIRFLOW_USER} -d $${POSTGRES_AIRFLOW_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: {{ redis_image }}
+    restart: unless-stopped
+    # Listas forma: a --save "" ures sztringje a stringes formaban elveszne.
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - ${REDIS_MAXMEMORY}
+      - --maxmemory-policy
+      - allkeys-lru
+    # A redis image VOLUME /data-t deklaral. tmpfs nelkul minden
+    # ujralétrehozasnal keletkezne egy nevtelen volume, amit a Compose ra-
+    # adasul at is orokit - igy csendben gyulnenek a gepen.
+    tmpfs:
+      - /data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres-data:

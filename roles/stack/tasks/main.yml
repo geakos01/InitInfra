@@ -1,0 +1,69 @@
+---
+- name: Titkok elokeszitese
+  ansible.builtin.include_tasks: secrets.yml
+  tags: [stack]
+
+- name: Konyvtarak
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ docker_users | first }}"
+    group: "{{ docker_users | first }}"
+    mode: "0755"
+  loop:
+    - "{{ stack_dir }}"
+    - "{{ stack_dir }}/initdb"
+    - "{{ app_dir }}"
+  tags: [stack]
+
+# A .env a titkokat tartalmazza, ezert 0600 es root tulajdon.
+- name: A .env kiirasa
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ stack_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: stack ujrainditasa
+  tags: [stack]
+
+- name: A compose fajl kiirasa
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ stack_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "sh -c 'cd %s/.. && docker compose -f %s config -q'"
+  notify: stack ujrainditasa
+  tags: [stack]
+
+- name: Az adatbazis-init szkript
+  ansible.builtin.copy:
+    src: initdb-10-app-db.sh
+    dest: "{{ stack_dir }}/initdb/10-app-db.sh"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: stack ujrainditasa
+  tags: [stack]
+
+# Ez a task GONDOSKODIK rola, hogy a stack fusson, de sosem ir "changed"-et:
+# a valtozast a fenti sablonok handlerei jelzik. Igy a masodik futas tiszta.
+- name: A stack fut
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: "{{ stack_dir }}"
+  changed_when: false
+  tags: [stack]
+
+- name: Varakozas a Postgresre
+  ansible.builtin.command:
+    cmd: docker compose exec -T postgres pg_isready -U {{ pg_airflow_user }} -d {{ pg_airflow_db }}
+    chdir: "{{ stack_dir }}"
+  register: pg_kesz
+  until: pg_kesz.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+  tags: [stack]

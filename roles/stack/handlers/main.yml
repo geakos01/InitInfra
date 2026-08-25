@@ -1,0 +1,7 @@
+---
+# A sablonok valtozasakor fut. A --remove-orphans azert kell, hogy egy
+# kivett service kontenere is eltunjon, ne maradjon arvan futva.
+- name: stack ujrainditasa
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: "{{ stack_dir }}"
