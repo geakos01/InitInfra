@@ -29,3 +29,20 @@ torch_version: 2.9.0
 airflow_uid: 50000
 airflow_admin_user: admin
 airflow_web_port: 8080
+
+# --- Observability ---------------------------------------------------------
+prometheus_image: prom/prometheus:v3.5.5
+grafana_image: grafana/grafana:13.1.4
+node_exporter_image: prom/node-exporter:v1.12.1
+# FIGYELEM: a cadvisor gcr.io-rol GHCR.IO-ra koltozott. A gcr.io alatt a
+# legfrissebb v0.52.1, es a tervben szereplo v0.60.5 SEHOL nem letezik.
+cadvisor_image: ghcr.io/google/cadvisor:v0.57.0
+postgres_exporter_image: prometheuscommunity/postgres-exporter:v0.20.1
+redis_exporter_image: oliver006/redis_exporter:v1.89.0
+statsd_exporter_image: prom/statsd-exporter:v0.29.0
+
+prometheus_retention: 30d
+prometheus_port: 9090
+grafana_port: 3000
+cadvisor_port: 8081
+grafana_admin_user: admin

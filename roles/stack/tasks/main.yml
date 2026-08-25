@@ -82,6 +82,37 @@
   when: app_image_van.rc != 0
   tags: [stack, app]
 
+# --- Observability konfiguraciok --------------------------------------------
+- name: A megfigyeles konyvtarai
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ stack_dir }}/prometheus"
+    - "{{ stack_dir }}/grafana/provisioning/datasources"
+  tags: [stack, obs]
+
+- name: A megfigyeles konfigfajljai
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: prometheus.yml,      dest: "{{ stack_dir }}/prometheus/prometheus.yml" }
+    # 19 szabaly. Az Airflow a dag_id-t es a task_id-t a metrika NEVEBE agyazza;
+    # mapping nelkul minden DAG/task/allapot kombinaciora kulon metrikanev
+    # keletkezne, ami Prometheusban kezelhetetlen.
+    - { src: statsd-mapping.yml,  dest: "{{ stack_dir }}/prometheus/statsd-mapping.yml" }
+    - { src: grafana/datasource-prometheus.yml,
+        dest: "{{ stack_dir }}/grafana/provisioning/datasources/prometheus.yml" }
+  notify: stack ujrainditasa
+  tags: [stack, obs]
+
 # A .env a titkokat tartalmazza, ezert 0600 es root tulajdon.
 - name: A .env kiirasa
   ansible.builtin.template:

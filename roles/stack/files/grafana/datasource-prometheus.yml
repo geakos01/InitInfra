@@ -1,0 +1,12 @@
+# A Grafananak PONTOSAN EGY adatforrasa van. Minden metrika a Prometheusbol jon,
+# beleertve az adatbazis- es az Airflow-metrikakat is - azokat is exporterek
+# forditjak Prometheus-formara.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
