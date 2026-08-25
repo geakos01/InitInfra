@@ -117,6 +117,18 @@ else
 fi
 info "$(git -C "$DIR" log -1 --format='%h %s')"
 
+# A repot root-kent klonoztuk, tehat root a tulajdonosa - es a git 2.35 ota
+# MEGTAGADJA a muveletet idegen tulajdonu repoban ("dubious ownership").
+# A telepites utan viszont a fejlesztoi ut az, hogy a gepen "git pull && make
+# dev" fut, a sajat felhasznaloval. Ezert atadjuk neki a repot.
+#
+# A SUDO_USER pontosan az az ember, aki a telepitot inditotta. Ha nincs
+# (kozvetlenul root-kent futott), akkor marad root - ott nincs mit atadni.
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    chown -R "$SUDO_USER:$SUDO_USER" "$DIR"
+    info "a repo tulajdonosa: $SUDO_USER"
+fi
+
 # --- 5. A playbook ----------------------------------------------------------
 # Innentol az Ansible dolgozik. Pull modell: a playbook a CELGEPEN fut, nem
 # tavolrol - ugyanazon az uton, ahogy a fejlesztes kozben is futtattuk.
