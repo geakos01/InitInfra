@@ -12,12 +12,14 @@
 > olvasni** — plusz a [DESIGN.md](DESIGN.md)-t (mit építünk és miért) és a
 > [ROADMAP.md](ROADMAP.md)-t (milyen sorrendben).
 
-**Hol tartunk:** a ROADMAP **0–6. fázisa kész**. A teljes stack — mind a 15
-szolgáltatás — **Ansible-ből épül**, a playbook `ok=43, changed=0`.
+**Hol tartunk:** a ROADMAP **0–7. fázisa kész**. A teljes stack — mind a 15
+szolgáltatás — **Ansible-ből épül**, a playbook `ok=45, changed=0`, a `make verify`
+**29/29 zöld**, és a `bootstrap.sh` egyetlen `curl | bash` paranccsal végigviszi
+az egészet.
 
-**Következő a 7. fázis:** a `bootstrap.sh` (a `curl | bash` belépési pont) és a
-`make verify`. A ROADMAP 7. fázisánál össze van szedve, mit kell a bootstrapnek
-kezelnie — mindegyik pontba **bele is futottunk** a 2. fázis nulláról-próbáján.
+**Következő a 8. fázis:** a nulláról-próba. Eldobjuk a VM-et, friss gépen csak a
+bootstrap URL-jét futtatjuk — és ezt **kétszer**. Az első sikeres futás gyakran
+szerencse; a második mondja meg, hogy reprodukálható.
 
 ### A repó
 
@@ -27,11 +29,13 @@ kezelnie — mindegyik pontba **bele is futottunk** a 2. fázis nulláról-prób
 | `docs/ROADMAP.md` | 10 fázis, fázisonként kész-kritériummal |
 | `docs/manual-install.md` | **az 1. fázis terméke** — a kézi telepítés minden parancsa, indoklással |
 | `docs/WORKLOG.md` | ez a fájl |
-| `site.yml`, `ansible.cfg`, `Makefile` | az Ansible belépési pontja; `make dev`, `make lint`, `make idempotens` |
+| `bootstrap.sh` | **a publikus belépési pont** — `curl … | sudo bash` egy szűz gépen |
+| `site.yml`, `ansible.cfg`, `Makefile` | `make dev`, `make verify`, `make lint`, `make idempotens` |
 | `inventory/`, `group_vars/all.yml` | pull modell (`localhost`), minden gépfüggő változó |
 | `roles/base/` | apt-megkeményítés, időzóna, swap, ufw, fail2ban, unattended-upgrades |
 | `roles/docker/` | Docker a hivatalos repóból + a `DOCKER-USER` blokk |
 | `roles/stack/` | az `app` image, Postgres, Redis, Airflow ×4, observability, Jupyter, `api` |
+| `roles/verify/` | 29 ellenőrzés; nem változtat semmit, `make verify` indítja |
 | `app/`, `stack/` | az 1. fázisban **kézzel bizonyított** referencia-fájlok |
 | `tests/` | füst-teszt DAG, minta-végpont, websocket kliens |
 | `scripts/setup-dev.sh` | wizard a 0.2–0.4 lépésekhez |
@@ -576,3 +580,82 @@ A Jupyternél ugyanaz a csapda: a named volume célkönyvtárát (`/opt/notebook
 `/home/airflow/.jupyter`) **az image-ben kell létrehozni** a helyes tulajdonossal,
 különben a Docker `root:root`-ként csinálja meg, és a konténer nem tud beleírni. Ez a
 Dockerfile sablonjába került, `{{ airflow_uid }}`-vel.
+
+---
+
+## 2026-08-25 — A 7. fázis kész: `bootstrap.sh` és `make verify`
+
+### Mi történt
+
+Két dolog született meg, és mindkettő méréssel van alátámasztva.
+
+**A `verify` szerepkör: 29 ellenőrzés, egyetlen parancsban.** Nem változtat semmit,
+és nem áll meg az első hibánál — mindegyik ellenőrzés lefut, a végén pedig egyben
+látszik, mi rossz. Egy első hibánál eldobó ellenőrzés csak a *legelső* problémát
+mutatná meg, a többit elrejtené.
+
+A szerkezete szándékosan adat, nem kód: a `roles/verify/vars/main.yml` egy lista,
+minden eleme egy név + egy héjparancs. **A parancsok kilépési kódja dönt** — nincs
+kimenet-elemzés, nincs reguláris kifejezésekbe rejtett logika. Új szolgáltatás a
+stackben = egy új sor a listában.
+
+Az ellenőrzések nem elméletiek: mindegyik parancs **kézzel le lett futtatva a VM-en**,
+mielőtt a listába került. Ezt fedik le:
+
+| Terület | Amit néz |
+|---|---|
+| Gép | időzóna, swap, swappiness, apt-időkorlát, automatikus frissítés |
+| Tűzfal | ufw aktív, SSH engedve, fail2ban él, `DOCKER-USER` lánc, **admin portok csak loopbackon** |
+| Docker | daemon fut, a felhasználók a `docker` csoportban, **minden szolgáltatás fut és egészséges** |
+| Adatok | mindkét Postgres-adatbázis fogad kapcsolatot, Redis `PONG` + `allkeys-lru` + `appendonly no` |
+| Airflow | mind a négy komponens `healthy`, a felület válaszol, nincs DAG import hiba |
+| Megfigyelés | **minden Prometheus target UP**, Grafana + adatforrás, statsd-metrikák érkeznek |
+| Jupyter, API | token nélkül 403 / tokennel 200, az API portja hallgat |
+
+**A `bootstrap.sh`: a publikus belépési pont.** Hat lépés, `curl … | sudo bash`.
+Mindegyik lépése egy olyan hibából származik, amibe a 2. fázisban ténylegesen
+belefutottunk: megvárja a `cloud-init`-et (különben az apt zár foglalt), **a telepítés
+előtt** írja ki az apt-időkorlátot (a `Pipeline-Depth 0` nélkül az apt órákig „fut"
+nulla CPU-idővel), telepíti az `ansible`-t és a `make`-et (a `git` már ott van a
+felhő-image-en), klónoz, futtat, majd ellenőriz.
+
+A `GITHUB_TOKEN` **nem kerül a lemezre**: nem a remote URL-be íródik, hanem egy
+`http.extraheader`-be, amit csak az adott hívás kap meg. Így a repo priváttá tétele
+után sem kell átírni semmit, és a `.git/config` tiszta marad.
+
+### Egy ellenőrzés, ami sosem bukik, semmit nem ér
+
+Ezért a `verify`-t **mindkét irányban** kipróbáltuk. Megállítottuk a
+`redis-exporter`-t, és a jelentés pontosan ezt írta:
+
+```
+[ HIBA ] Docker: minden szolgaltatas fut es egeszseges   -> rc=1 redis-exporter=exited/-
+[ HIBA ] Prometheus: minden target UP                    -> rc=1 redis=down
+27 / 29 ellenorzes rendben.
+```
+
+Két különböző ellenőrzés fogta meg ugyanazt a hibát, két különböző oldalról — és a
+`make` nem nulla kilépési kóddal állt le. Indítás után újra 29/29.
+
+### A titkok tulajdonosa: egy csendes csapda a bootstrapben
+
+A jelszavakat a `password` lookup állítja elő, ami a **vezérlő gépen** fut — vagyis az
+`ansible`-t indító felhasználó nevében. Fejlesztés közben ez az `ubuntu`, a
+bootstrapben viszont **root**. Egy root-ként létrehozott `0600`-as fájlt az `ubuntu`
+később már nem tudna visszaolvasni: a következő `make dev` `Permission denied`-del állt
+volna meg — egy olyan gépen, ahol addig minden működött.
+
+A javítás egy záró lépés a `secrets.yml`-ben, ami minden futás végén egységesíti a
+tulajdonost. Így mindegy, milyen sorrendben fut a kettő. Ellenőrizve: `sudo make dev`
+után `make dev` ugyanúgy `ok=45, changed=0`, és fordítva is.
+
+### Mérleg
+
+| | |
+|---|---|
+| `make verify` | 29/29 zöld, hibás gépen pirosra vált és megnevezi a hibást |
+| Playbook | `ok=45, changed=0` — root-ként és `ubuntu`-ként is |
+| `bootstrap.sh` | a meglévő gépen végigfutott, a záró verify zöld |
+
+Amit a bootstrap **még nem** bizonyított: hogy egy szűz gépen is végigmegy. Az a
+8. fázis, és az az igazi teszt.
