@@ -107,10 +107,17 @@
   changed_when: false
   tags: [stack, app]
 
+# Ugyanaz a megfontolas, mint a "A stack fut" tasknal: a build tobb szaz
+# megabajtot tolt le (az Airflow alapkep es a torch), es a Docker retegenkent
+# gyorsitotaraz - egy ujraprobalkozas az utolso sikeres retegtol folytatja.
 - name: Az app image megepitese
   ansible.builtin.command:
     cmd: docker build -t {{ app_image }} .
     chdir: "{{ stack_dir }}/app"
+  register: app_build
+  until: app_build.rc == 0
+  retries: 3
+  delay: 15
   when: app_image_van.rc != 0
   tags: [stack, app]
 
@@ -192,10 +199,23 @@
 
 # Ez a task GONDOSKODIK rola, hogy a stack fusson, de sosem ir "changed"-et:
 # a valtozast a fenti sablonok handlerei jelzik. Igy a masodik futas tiszta.
+#
+# Az ujraprobalkozas NEM ovatoskodas: egy nullarol-probanal a 229. megabajtnal
+# elszakadt a kapcsolat a registry fele ("connection reset by peer"), es az
+# egesz telepites elhasalt. A Docker a mar letoltott retegeket megtartja, tehat
+# az ujraprobalkozas onnan folytatja, ahol abbahagyta - nem kezdi elolrol.
+#
+# Egy telepitonek, ami tobb gigabajtnyi image-et tolt le, szamitania kell arra,
+# hogy a halozat elszakad kozben. Ez nem kivetel, hanem a normalis mukodes
+# resze.
 - name: A stack fut
   ansible.builtin.command:
     cmd: docker compose up -d --remove-orphans
     chdir: "{{ stack_dir }}"
+  register: stack_all
+  until: stack_all.rc == 0
+  retries: 3
+  delay: 15
   changed_when: false
   tags: [stack]
 
