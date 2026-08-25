@@ -13,15 +13,18 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1. és 2. fázisa is KÉSZ**.
+1., 2. és 3. fázisa is KÉSZ**.
 
 Az 1. fázisban kézzel felépült mind a 15 szolgáltatás (a jegyzet:
 [manual-install.md](manual-install.md)). A 2. fázisban megszületett az **Ansible váz**,
 és a `base` + `docker` szerepkör **friss VM-en, nulláról lefutott** — a második futás
 `changed=0`.
 
-**Következő a 3. fázis:** a `stack` szerepkör, Postgresszel és Redisszel. A működő
-compose-fájl és minden konfig már a repóban van, tehát ez nagyrészt sablonosítás.
+A 3. fázisban megszületett a **`stack` szerepkör**: Postgres két adatbázissal és
+Redis, a titkok idempotens kezelésével. A teljes playbook `ok=34, changed=0`.
+
+**Következő a 4. fázis:** az `app` image és az Airflow négy komponense. A roadmap
+szerint ez a legnehezebb rész — de a nehezét az 1. fázisban már megoldottuk.
 
 **Mi van kész:**
 
@@ -66,8 +69,9 @@ compose-fájl és minden konfig már a repóban van, tehát ez nagyrészt sablon
 
 **Mi a következő teendő:**
 
-A **3. fázis**: a `stack` szerepkör Postgresszel és Redisszel. A fordítás innentől
-nagyrészt sablonosítás — a működő fájlok a `stack/` alatt vannak.
+A **4. fázis**: az `app` image megépítése és az Airflow négy komponense
+LocalExecutorral. A működő Dockerfile és compose-részlet az `app/` és `stack/` alatt
+van, tehát ez is nagyrészt sablonosítás.
 
 Amit a 2. fázisnak külön észben kell tartania (a jegyzetből):
 
@@ -485,3 +489,42 @@ Az első változat awk `printf`-jében `` és `
 vezérlőkarakterré alakultak, a beágyazott újsor pedig kettétörte a receptet:
 `missing separator`. A színezés nem éri meg ezt a törékenységet — a `help` most
 `sed` + `column` párossal áll elő, escape nélkül.
+
+---
+
+## 2026-08-25 — A 3. fázis kész: `stack` szerepkör, Postgres és Redis
+
+### Mi történt
+
+A `stack` szerepkör felépíti a `/opt/stack`-et: `.env`, `docker-compose.yml`,
+initdb-szkript, majd elindítja a Postgrest és a Redist. A fázis kritériuma teljesült —
+mindkét adatbázis megvan a saját userével, a Redis `PONG`-gal válaszol, és a policy
+**tényleg** `allkeys-lru`. A teljes playbook `ok=34, changed=0`.
+
+### A titkok idempotenciája volt az igazi feladat
+
+Ha minden futás új jelszót generálna, a meglévő adatbázis elérhetetlenné válna. Az
+első megoldásom a `.env` visszaolvasásával próbálkozott Jinja-szűrőkön keresztül — és
+**csendben nem működött**: a YAML behajtogatott blokkjában a `'
+'` nem újsor, hanem
+két karakter, ezért a `split` nem darabolt semmit. A jelszavak minden futásnál újra
+keletkeztek.
+
+Ez a fajta hiba a legveszélyesebb: a playbook *lefutott*, `failed=0`-t írt, és csak a
+`changed=2` árulta el, hogy valami nem stimmel. Éles gépen a második futás tette volna
+tönkre az adatbázis-hozzáférést.
+
+A megoldás az `ansible.builtin.password` lookup, ami eleve erre való: ha a fájl
+létezik, visszaolvassa; ha nem, generál. Fontos részlet, hogy a lookup a **vezérlő**
+gépen fut — pull modellben ugyanaz a gép, de nem rootként, hanem az ansible-t futtató
+felhasználóként, ezért a könyvtárat előre létre kell hozni az ő tulajdonában.
+
+### Egy jogosultsági döntés
+
+A `.env`-et először `root:root 0600`-ra tettem. Emiatt a `docker compose ps` is csak
+`sudo`-val ment, mert a Compose olvassa a `.env`-et — ez az operátornak
+elfogadhatatlan súrlódás.
+
+A csoport `docker` lett, `0640`-nel. Ez **nem gyengít semmit**: a `docker` csoport
+tagsága amúgy is root-egyenértékű, hiszen bárki, aki tagja, be tudja mountolni a `/`-t
+egy konténerbe.
