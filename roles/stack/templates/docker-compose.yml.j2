@@ -303,8 +303,91 @@ services:
       - "9102"
       - "9125/udp"
 
+{% if jupyter_enabled %}
+  # ---------------- Jupyter ----------------
+  # UGYANABBOL az app image-bol fut, mint az Airflow: a notebookok pontosan
+  # azokat a konyvtarakat es verziokat latjak, mint a DAG-ok.
+  jupyter:
+    image: {{ app_image }}
+    restart: unless-stopped
+    # Az airflow image entrypointja MINDEN parancsot az airflow CLI-nek ad
+    # tovabb ("jupyter --version" az airflow sugojat irja ki), ezert felulirjuk.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        jupyter lab
+        --ip=0.0.0.0 --port=8888 --no-browser
+        --IdentityProvider.token="${JUPYTER_TOKEN}"
+        --ServerApp.root_dir=/opt/notebooks
+    environment:
+      <<: *airflow-common-env
+      PYTHONPATH: {{ app_dir }}
+    volumes:
+      # A modellkod CSAK OLVASHATO. Nem korlatozas, hanem vedelem: a /opt/app
+      # git-kezelt, es a kovetkezo git pull utkozne barmivel, amit ide mentenenk.
+      - {{ app_dir }}:{{ app_dir }}:ro
+      # A munka kulon, irhato named volume-ban. A celkonyvtarat a Dockerfile
+      # hozza letre a helyes tulajdonossal - kulonben a Docker root:root-kent
+      # csinalna meg, es az UID {{ airflow_uid }} nem tudna beleirni.
+      - notebooks:/opt/notebooks
+      - jupyter-config:/home/airflow/.jupyter
+    working_dir: /opt/notebooks
+    user: "${AIRFLOW_UID}:0"
+    ports:
+      # A Jupyter teljes koru kodfuttatas az eles adatbazis elereseval.
+      # SOHA ne tedd ki szelesebb korben, mint a sajat cimed.
+      - "127.0.0.1:{{ jupyter_port }}:8888"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8888/api || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+{% endif %}
+{% if api_enabled %}
+
+  # ---------------- FastAPI vegpont ----------------
+  # A stack EGYETLEN eleme, ami valoban kifele nez. A KODJA nem az InitInfra
+  # resze: a {{ app_dir }}-bol jon, ugyfelenkent mas, git pull frissiti.
+  api:
+    image: {{ app_image }}
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - ${API_COMMAND}
+    environment:
+      <<: *airflow-common-env
+      PYTHONPATH: {{ app_dir }}
+    volumes:
+      - {{ app_dir }}:{{ app_dir }}:ro
+    working_dir: {{ app_dir }}
+    user: "${AIRFLOW_UID}:0"
+    ports:
+      # NEM loopback - ez a dolga. A szukitest az api_allowed_ips-bol generalt
+      # DOCKER-USER szabalyok vegzik, NEM az ufw: azt a Docker megkerulne.
+      - "${API_PORT}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+{% endif %}
+
 volumes:
   postgres-data:
   airflow-logs:
   prometheus-data:
   grafana-data:
+{% if jupyter_enabled %}
+  notebooks:
+  jupyter-config:
+{% endif %}

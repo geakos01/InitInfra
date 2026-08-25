@@ -46,3 +46,7 @@ prometheus_port: 9090
 grafana_port: 3000
 cadvisor_port: 8081
 grafana_admin_user: admin
+
+# --- Jupyter ---------------------------------------------------------------
+jupyter_enabled: true
+jupyter_port: 8888

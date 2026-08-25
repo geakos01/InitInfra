@@ -52,3 +52,29 @@ api_allowed_ips: []
 stack_dir: /opt/stack
 app_dir: /opt/app
 initinfra_dir: /opt/initinfra
+
+# --- A DOCKER-USER lanc szabalyai -------------------------------------------
+# Ebbol generalja a docker szerepkor az /etc/ufw/after.rules blokkjat.
+#
+# FONTOS: ez NEM ufw szabaly. A Docker kozvetlenul az iptables FORWARD lancaba
+# ir, az ufw ele - egy publikalt kontener-port ezert ufw-vel nem szurheto.
+# Meres es reszletek: docs/manual-install.md 4. szakasz.
+#
+# Ures lista eseten is kirendereljuk a blokkot, mert a ":DOCKER-USER - [0:0]"
+# sor az, ami ufw reload-kor NULLAZZA a lancot. Enelkul a korabbi szabalyok
+# bennragadnanak, es a kikapcsolas nem mukodne.
+docker_user_rules: >-
+  {{
+    (
+      [{'port': api_port, 'allowed_ips': api_allowed_ips}]
+      if (api_enabled and api_allowed_ips | length > 0) else []
+    )
+    +
+    (
+      [{'port': airflow_web_port, 'allowed_ips': allowed_ips},
+       {'port': grafana_port,     'allowed_ips': allowed_ips},
+       {'port': prometheus_port,  'allowed_ips': allowed_ips},
+       {'port': jupyter_port,     'allowed_ips': allowed_ips}]
+      if (publish_web_ui and allowed_ips | length > 0) else []
+    )
+  }}
