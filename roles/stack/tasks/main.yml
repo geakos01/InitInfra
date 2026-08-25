@@ -22,8 +22,12 @@
     src: env.j2
     dest: "{{ stack_dir }}/.env"
     owner: root
-    group: root
-    mode: "0600"
+    # A csoport a "docker", 0640-nel. A docker csoport tagsaga amugy is
+    # root-egyenerteku (barki, aki tagja, be tud mountolni / -t egy kontenerbe),
+    # tehat ez nem gyengit semmit - viszont enelkul a "docker compose ps" is
+    # csak sudo-val menne, mert a Compose olvassa a .env-et.
+    group: docker
+    mode: "0640"
   notify: stack ujrainditasa
   tags: [stack]
 
