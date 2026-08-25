@@ -5,3 +5,10 @@
   ansible.builtin.command:
     cmd: docker compose up -d --remove-orphans
     chdir: "{{ stack_dir }}"
+
+# A Dockerfile vagy a requirements.txt valtozasakor fut.
+- name: app image ujraepitese
+  ansible.builtin.command:
+    cmd: docker build -t {{ app_image }} .
+    chdir: "{{ stack_dir }}/app"
+  notify: stack ujrainditasa

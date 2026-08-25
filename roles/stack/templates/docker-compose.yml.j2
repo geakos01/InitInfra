@@ -2,6 +2,46 @@
 # Forras: roles/stack/templates/docker-compose.yml.j2
 name: initinfra
 
+# ---------------------------------------------------------------------------
+# Airflow 3.3.1, LocalExecutorral.
+#
+# A hivatalos compose fajlbol indul, de a "worker" es a "flower" kimarad (azok
+# Celery-specifikusak), es a redis NEM broker: az az alkalmazase, az Airflow
+# nem is latja. Reszletek: docs/manual-install.md 7. szakasz.
+# ---------------------------------------------------------------------------
+x-airflow-common: &airflow-common
+  image: {{ app_image }}
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_AIRFLOW_USER}:${POSTGRES_AIRFLOW_PASSWORD}@postgres/${POSTGRES_AIRFLOW_DB}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    # A 3.x-ben a taskok a Task Execution API-n beszelnek, nem kozvetlenul a DB-vel
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # A modellkodnak atadott kapcsolati adatok. Az Airflow ezeket nem hasznalja,
+    # de a DAG-ok innen tudjak, hova csatlakozzanak. Enelkul a stack "mukodonek"
+    # latszana, es csak az elso valodi DAG-nal derulne ki a hiany.
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: '5432'
+    POSTGRES_APP_DB: ${POSTGRES_APP_DB}
+    POSTGRES_APP_USER: ${POSTGRES_APP_USER}
+    POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    REDIS_HOST: redis
+    REDIS_PORT: '6379'
+  volumes:
+    - {{ app_dir }}/dags:/opt/airflow/dags
+    - airflow-logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID}:0"
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
 services:
   postgres:
     image: {{ postgres_image }}
@@ -59,5 +99,93 @@ services:
       retries: 5
       start_period: 10s
 
+  # Egyszer fut le: DB migracio + admin user. A tobbi service ezt megvarja.
+  # Az entrypoint dolgozza fel a _AIRFLOW_DB_MIGRATE / _AIRFLOW_WWW_USER_CREATE
+  # valtozokat - ezert hivjuk explicit a "/entrypoint airflow version"-t.
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/{logs,dags,plugins,config}
+        chown -R "${AIRFLOW_UID}:0" /opt/airflow/{logs,plugins,config}
+        /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    user: "0:0"
+    restart: on-failure
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ airflow_web_port }}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+    # A taskok a scheduler gyerekfolyamatai (LocalExecutor). A limit azert kell,
+    # hogy egy elszallo trening ne vigye el a gep egesz memoriajat: a cgroup OOM
+    # killer a legnagyobb folyamatot lovi ki, azaz a treninget, nem a schedulert.
+    mem_limit: {{ scheduler_mem_limit }}
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
 volumes:
   postgres-data:
+  airflow-logs:

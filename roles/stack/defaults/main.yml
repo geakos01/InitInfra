@@ -17,3 +17,15 @@ redis_maxmemory: 512mb
 # --- Eroforras-korlatok ----------------------------------------------------
 # A dev VM 8 GB, az eles gep akar 32 GB. NE drotozd be.
 scheduler_mem_limit: 3g
+
+# --- Az app image ----------------------------------------------------------
+# Ebbol fut az Airflow negy komponense, a Jupyter es a FastAPI vegpont is:
+# egyetlen Python-kornyezet a gepen.
+app_image: initinfra/app:dev
+airflow_base_image: apache/airflow:3.3.1-python3.12
+torch_version: 2.9.0
+
+# --- Airflow ---------------------------------------------------------------
+airflow_uid: 50000
+airflow_admin_user: admin
+airflow_web_port: 8080

@@ -13,8 +13,60 @@
   loop:
     - "{{ stack_dir }}"
     - "{{ stack_dir }}/initdb"
+    - "{{ stack_dir }}/config"
+    - "{{ stack_dir }}/plugins"
     - "{{ app_dir }}"
+    # A DAG-ok a modellkodbol jonnek, amit git pull frissit. Az InitInfra csak
+    # a konyvtarat hozza letre - a tartalom az ugyfele.
+    - "{{ app_dir }}/dags"
   tags: [stack]
+
+# --- Az app image ----------------------------------------------------------
+- name: Az app image konyvtara
+  ansible.builtin.file:
+    path: "{{ stack_dir }}/app"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [stack, app]
+
+- name: A Dockerfile
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ stack_dir }}/app/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: app image ujraepitese
+  tags: [stack, app]
+
+- name: A requirements.txt
+  ansible.builtin.copy:
+    src: requirements.txt
+    dest: "{{ stack_dir }}/app/requirements.txt"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: app image ujraepitese
+  tags: [stack, app]
+
+# Ket lepesben: eloszor megnezzuk, letezik-e mar. Igy az elso futas megepiti,
+# a tobbi pedig NEM ir hamis "changed"-et. A forrasfajlok valtozasat a fenti
+# ket task handlere kezeli.
+- name: Letezik-e mar az app image
+  ansible.builtin.command: docker image inspect {{ app_image }}
+  register: app_image_van
+  failed_when: false
+  changed_when: false
+  tags: [stack, app]
+
+- name: Az app image megepitese
+  ansible.builtin.command:
+    cmd: docker build -t {{ app_image }} .
+    chdir: "{{ stack_dir }}/app"
+  when: app_image_van.rc != 0
+  tags: [stack, app]
 
 # A .env a titkokat tartalmazza, ezert 0600 es root tulajdon.
 - name: A .env kiirasa
