@@ -8,112 +8,92 @@
 
 ## Jelenlegi állapot
 
-> Ezt a blokkot mindig frissítjük. Ha új beszélgetésben veszed fel a fonalat, ez az
-> egyetlen dolog, amit el kell olvasni — plusz a [DESIGN.md](DESIGN.md)-t és a
-> [ROADMAP.md](ROADMAP.md)-t.
+> Ha új beszélgetésben veszed fel a fonalat, **ez az egyetlen blokk, amit el kell
+> olvasni** — plusz a [DESIGN.md](DESIGN.md)-t (mit építünk és miért) és a
+> [ROADMAP.md](ROADMAP.md)-t (milyen sorrendben).
 
-**Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1-6. fázisa is KÉSZ**.
+**Hol tartunk:** a ROADMAP **0–6. fázisa kész**. A teljes stack — mind a 15
+szolgáltatás — **Ansible-ből épül**, a playbook `ok=43, changed=0`.
 
-Az 1. fázisban kézzel felépült mind a 15 szolgáltatás (a jegyzet:
-[manual-install.md](manual-install.md)). A 2. fázisban megszületett az **Ansible váz**,
-és a `base` + `docker` szerepkör **friss VM-en, nulláról lefutott** — a második futás
-`changed=0`.
+**Következő a 7. fázis:** a `bootstrap.sh` (a `curl | bash` belépési pont) és a
+`make verify`. A ROADMAP 7. fázisánál össze van szedve, mit kell a bootstrapnek
+kezelnie — mindegyik pontba **bele is futottunk** a 2. fázis nulláról-próbáján.
 
-A 3. fázisban megszületett a **`stack` szerepkör**: Postgres két adatbázissal és
-Redis, a titkok idempotens kezelésével. A teljes playbook `ok=34, changed=0`.
-
-**Mind a 15 szolgáltatás Ansible-ből épül.** A teljes playbook `ok=43, changed=0`.
-Bizonyítva: valódi DAG-futás (3/3 task), 6/6 Prometheus target UP, és websocket-forgalom
-végigment az API-n Postgresbe és Redisbe.
-
-**Következő a 7. fázis:** a `bootstrap.sh` és a `make verify`.
-
-**Mi van kész:**
+### A repó
 
 | | |
 |---|---|
-| `docs/DESIGN.md` | a teljes terv — mit építünk és miért, 17 döntés indoklással |
-| `docs/ROADMAP.md` | 10 fázisú építési útmutató, fázisonként kész-kritériummal |
+| `docs/DESIGN.md` | a teljes terv, 17 döntés indoklással + változásnapló |
+| `docs/ROADMAP.md` | 10 fázis, fázisonként kész-kritériummal |
+| `docs/manual-install.md` | **az 1. fázis terméke** — a kézi telepítés minden parancsa, indoklással |
 | `docs/WORKLOG.md` | ez a fájl |
-| `docs/manual-install.md` | **az 1. fázis terméke** — minden működő parancs, indoklással |
-| `app/Dockerfile`, `app/requirements.txt` | a közös `app` image — mérve, nem tippelve |
-| `stack/docker-compose.yml` | a működő stack: 13 szolgáltatás |
-| `stack/prometheus/`, `stack/grafana/` | scrape-konfig, statsd mapping (19 szabály), Grafana adatforrás |
-| `tests/smoke_test_dag.py` | füst-teszt: valódi DAG-futás, könyvtárak + DB-kapcsolat |
-| `tests/minta_api/`, `tests/ws_kliens.py` | minta-végpont és websocket kliens a vezetékezés próbájához |
-| `scripts/setup-dev.sh` | interaktív wizard a 0.2–0.4 lépésekhez (idempotens, újrafuttatható) |
-| `.gitattributes` | `* text=auto eol=lf` — az első commit óta, ez nem véletlen |
-| `.claude/settings.json` | 5 read-only parancs engedélylistája |
-| git | `main` ág, publikus GitHub repo, `origin` beállítva |
+| `site.yml`, `ansible.cfg`, `Makefile` | az Ansible belépési pontja; `make dev`, `make lint`, `make idempotens` |
+| `inventory/`, `group_vars/all.yml` | pull modell (`localhost`), minden gépfüggő változó |
+| `roles/base/` | apt-megkeményítés, időzóna, swap, ufw, fail2ban, unattended-upgrades |
+| `roles/docker/` | Docker a hivatalos repóból + a `DOCKER-USER` blokk |
+| `roles/stack/` | az `app` image, Postgres, Redis, Airflow ×4, observability, Jupyter, `api` |
+| `app/`, `stack/` | az 1. fázisban **kézzel bizonyított** referencia-fájlok |
+| `tests/` | füst-teszt DAG, minta-végpont, websocket kliens |
+| `scripts/setup-dev.sh` | wizard a 0.2–0.4 lépésekhez |
 
-**A fejlesztői környezet (0.2–0.4):**
+### A fejlesztői környezet
 
 | | |
 |---|---|
-| Gazdagép | ASUS TUF B550M-PLUS, Ryzen 7 5700, 31.8 GB RAM, 16 szál |
-| WSL2 | `Ubuntu-24.04`, user `geakos`, systemd be — **opcionális, nem használjuk** |
-| Multipass | 1.16.3, backend `hyperv` |
-| Cél-VM | `infra` — Ubuntu 24.04.4 LTS, 4 mag / 8 GB / 40 GB |
-| A VM-en | Docker 29.7.2 + Compose v5.5.0, ufw (csak 22), fail2ban, 4G swap, Europe/Budapest |
-| A stack | `/opt/stack` — `postgres:16` (`airflow` + `app` DB) és `redis:7.2`, mindkettő `127.0.0.1`-en |
-| `app` image | `initinfra/app:dev`, 4.61 GB — Airflow 3.3.1 + torch 2.9.0+**cpu** + a modellkód függőségei |
-| Airflow | 4 komponens (`apiserver`, `scheduler`, `dag-processor`, `triggerer`), LocalExecutor, `127.0.0.1:8080` |
-| Observability | Prometheus `:9090`, Grafana `:3000`, node/cadvisor/postgres/redis/statsd exporterek — 6/6 target UP |
-| Jupyter | `127.0.0.1:8888`, tokennel védve, ugyanabból az `app` image-ből; `/opt/app` **csak olvasva** |
-| `api` | `0.0.0.0:8000` — **az egyetlen kifelé nyitott**, a kód a `/opt/app`-ból jön |
+| Gazdagép | Windows 11, Ryzen 7 5700, 31.8 GB RAM |
+| Cél-VM | `infra` (Multipass/Hyper-V) — Ubuntu 24.04.4, 4 mag / 8 GB / 40 GB |
+| Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — az IP minden újraindításkor változik, a név nem |
+| Kód a VM-re | `git push` → a VM-en `cd /opt/initinfra && git pull && make dev` |
+| `.env` (a fejlesztőgépen) | `VM_NAME`, `VM_HOST`, `GH_OWNER` — **gitignore-olt** |
+| GitHub | `geakos01/InitInfra`, publikus |
 
-> **A VM-et a 2. fázis végén eldobtuk és újraépítettük.** Most csak a `base` + `docker`
-> szerepkör van rajta, a 15 konténeres stack nincs — azt a 3–6. fázis építi vissza,
-> Ansible-ből. Minden konfig a repóban van.
-| Hozzáférés | **`ssh ubuntu@infra.mshome.net`** — stabil név; az IP minden újraindításkor változik |
-| Kód a VM-re | `git push` a fejlesztőgépen, `git pull` a VM-en — **nincs rsync** |
-| `.env` | `VM_NAME`, `VM_HOST`, `VM_IP`, `GH_OWNER` — **gitignore-olt** |
+### Mi fut most a VM-en
 
-**Mi a következő teendő:**
+Mind a 15 szolgáltatás, Ansible-ből: `postgres`, `redis`, `airflow-{apiserver,
+scheduler,dag-processor,triggerer}`, `jupyter`, `api`, `prometheus`, `grafana`,
+`node-exporter`, `cadvisor`, `postgres-exporter`, `redis-exporter`, `statsd-exporter`.
 
-A **7. fázis**: a `bootstrap.sh` (a `curl | bash` belépési pont) és a `make verify`.
-A ROADMAP 7. fázisánál ott van, mit kell a bootstrapnek kezelnie — mindegyik pontba
-bele is futottunk a 2. fázis nulláról-próbáján.
+Kívülről **egyedül a `8000`** (API) érhető el — a hét admin port zárt. 6/6 Prometheus
+target UP.
 
-Amit a 2. fázisnak külön észben kell tartania (a jegyzetből):
+### Amire figyelni kell
 
-- a `mem_limit`, `REDIS_MAXMEMORY`, swap-méret, időzóna **változóból**
-- a `DOCKER-USER` blokk **mindig** renderelődjön, akkor is ha üres
-- a `docker` csoporttagság miatt `meta: reset_connection` kell
-- minden named volume célkönyvtárát **az image-ben** kell létrehozni, helyes tulajdonossal
-- a `.env` szóközös értékeit **idézőjelezni** kell Minden működő parancs megy a
-`manual-install.md`-be — az adja a 2. fázis Ansible-jének a bemenetét.
+**A projektről:**
 
-A 4–5. lépés három újraindítást is kiállt: a Postgres adata megmaradt (named volume),
-a Redisé eltűnt (tmpfs) — pontosan a 11. döntés szerint —, és az `initdb` szkript
-**nem** futott újra.
-
-**A terv lényege egy bekezdésben:** egy szűz Linux gépből egyetlen `curl | bash`
-paranccsal működő futtatókörnyezetet csinálunk. **Minden szolgáltatás konténerben**
-fut (15 db); a hoston csak Docker és alap gép-higiénia van. Egy közös `app` image
-szolgálja ki az Airflow négy komponensét, a Jupytert és a FastAPI végpontot. A telepítő
-**Ansible**, pull modellben — a célgépen fut, nem távolról. Ubuntu 24.04, minden verzió
-pinnelve.
-
-**Nyitott, tudatosan:** backup, alerting, TLS a publikált felületek előtt, ADR-ek.
-
-**Amire figyelni kell:**
-
-- A fejlesztés Windowsról megy, a célgép Linux — a CRLF és az exec bit valódi buktató
-- A `/opt/stack` a célgépen **generált**; amit ott kézzel javítasz, elvész
+- A `/opt/stack` a célgépen **generált** — amit ott kézzel javítasz, elvész
 - A dev VM **eldobható**: hiba esetén a repóban javítunk, nem a gépen
-- **A Docker megkerüli az ufw-t** — a publikált portokat a `DOCKER-USER` láncban
-  kell szűrni. Mérve és dokumentálva: `manual-install.md` 4. szakasza
-- A Git Bash `grep`-je **összeomlik** ezen a gépen (lásd a `*.stackdump`-ot), és
-  csendben üres eredményt ad. Keresésre Pythont használj, ne `grep`-et
-- A VM IP-je **minden újraindításkor megváltozik** (három próba, három cím). Ne az
-  IP-t használd: `ssh ubuntu@infra.mshome.net` — a Hyper-V DNS-e követi
-- A **Compose átörökíti a névtelen volume-okat** konténer-újralétrehozáskor, ezért egy
-  utólag hozzáadott `tmpfs` nem takarítja el a régit — `docker compose rm -sfv <service>` kell
-- **`docker compose down -v` SOHA** a VM-en: a `postgres-data` named volume-ot is törli
-- A `mem_limit` értékeket a 2. fázisban **változóból** generáljuk, ne bedrótozva: a
-  valódi gép 32 GB, a dev VM 8 GB — a bedrótozott limitek a VM-en elfogynának
+- **`docker compose down -v` SOHA** éles gépen: a `postgres-data`-t is törli
+- A titkok a gépen keletkeznek (`/opt/stack/.secrets/`), sosem a repóban
+
+**Technikai buktatók, mind méréssel:**
+
+- **A Docker megkerüli az `ufw`-t** — a publikált portokat a `DOCKER-USER` láncban kell
+  szűrni, `--ctorigdstport` + `--ctdir ORIGINAL` szabályokkal
+- **Az `apt` végtelenül tud várni** — `Pipeline-Depth 0` és `ForceIPv4` nélkül órákig
+  „fut" nulla CPU-idővel
+- Minden **named volume célkönyvtárát az image-ben** kell létrehozni, helyes
+  tulajdonossal — különben `root:root` lesz, és a szolgáltatás `healthy`, de nem működik
+- **Chown-pingpong**: ha két rendszer ugyanazt a fájlt húzza, a playbook sosem lesz
+  idempotens (a `--diff` mutatja meg)
+- A `.env` **szóközös értékeit idézőjelezni** kell
+- **A `/home/airflow`-ra soha ne mountolj volume-ot** — a `pip` oda telepít
+
+**A fejlesztőgépről:**
+
+- A Git Bash `grep`-je összeomlik és **csendben üres eredményt ad** — keresésre Pythont
+- A `pkill -f <minta>` megeheti a saját munkamenetet, ha a minta a parancssorában is
+  szerepel — PID szerint ölj
+
+### A terv egy bekezdésben
+
+Egy szűz Linux gépből egyetlen `curl | bash` paranccsal működő futtatókörnyezetet
+csinálunk. **Minden szolgáltatás konténerben** fut; a hoston csak Docker és alap
+gép-higiénia van. Egy közös `app` image szolgálja ki az Airflow négy komponensét, a
+Jupytert és a FastAPI végpontot. A telepítő **Ansible**, pull modellben — a célgépen
+fut, nem távolról. Ubuntu 24.04, minden verzió pinnelve.
+
+**Nyitott, tudatosan:** backup (`pg_dump`), alerting, TLS a publikált felületek előtt,
+ADR-ek.
 
 ---
 
