@@ -13,7 +13,7 @@
 > [ROADMAP.md](ROADMAP.md)-t.
 
 **Hol tartunk:** a tervezés lezárva, a ROADMAP **0.1–0.4 kész**, és az **1. fázis
-1., 2. és 3. fázisa is KÉSZ**.
+1-4. fázisa is KÉSZ**.
 
 Az 1. fázisban kézzel felépült mind a 15 szolgáltatás (a jegyzet:
 [manual-install.md](manual-install.md)). A 2. fázisban megszületett az **Ansible váz**,
@@ -23,8 +23,11 @@ Az 1. fázisban kézzel felépült mind a 15 szolgáltatás (a jegyzet:
 A 3. fázisban megszületett a **`stack` szerepkör**: Postgres két adatbázissal és
 Redis, a titkok idempotens kezelésével. A teljes playbook `ok=34, changed=0`.
 
-**Következő a 4. fázis:** az `app` image és az Airflow négy komponense. A roadmap
-szerint ez a legnehezebb rész — de a nehezét az 1. fázisban már megoldottuk.
+A 4. fázisban az `app` image és az Airflow négy komponense is Ansible-ből épül.
+Bizonyítva: egy valódi DAG végigfutott rajta (3/3 task), a torch, a pandas és a
+Postgres-kapcsolat mind működik a task környezetében.
+
+**Következő az 5. fázis:** observability — Prometheus, Grafana és az öt exporter.
 
 **Mi van kész:**
 
@@ -69,9 +72,8 @@ szerint ez a legnehezebb rész — de a nehezét az 1. fázisban már megoldottu
 
 **Mi a következő teendő:**
 
-A **4. fázis**: az `app` image megépítése és az Airflow négy komponense
-LocalExecutorral. A működő Dockerfile és compose-részlet az `app/` és `stack/` alatt
-van, tehát ez is nagyrészt sablonosítás.
+Az **5. fázis**: observability. A működő Prometheus-konfig és a 19 szabályos statsd
+mapping a `stack/prometheus/` alatt van — a fordítás nagyrészt másolás és sablonosítás.
 
 Amit a 2. fázisnak külön észben kell tartania (a jegyzetből):
 
@@ -528,3 +530,34 @@ elfogadhatatlan súrlódás.
 A csoport `docker` lett, `0640`-nel. Ez **nem gyengít semmit**: a `docker` csoport
 tagsága amúgy is root-egyenértékű, hiszen bárki, aki tagja, be tudja mountolni a `/`-t
 egy konténerbe.
+
+---
+
+## 2026-08-25 (2) — A 4. fázis kész: `app` image és Airflow Ansible-ből
+
+### Mi történt
+
+A roadmap szerint ez volt „a legnehezebb rész" — de a nehezét az 1. fázisban már
+megoldottuk, így itt tényleg fordítás volt. Az `app` image a `stack` szerepkörből
+épül, a Dockerfile sablon lett (az alap image és a torch verziója `group_vars`-ból
+jön), és az Airflow négy komponense a compose sablonba került.
+
+A bizonyíték nem az, hogy „elindult": egy valódi DAG **végigfutott** az Ansible által
+épített stacken, 3/3 sikeres taskkal, és a task saját maga csatlakozott a Postgreshez.
+
+### Két idempotencia-csapda
+
+**Az image-építés.** Ha egyszerűen `docker build`-et futtatnánk minden körben, az
+mindig `changed`-et írna. A megoldás két lépés: előbb `docker image inspect`
+(`changed_when: false`), és a build csak akkor fut, ha az image nincs meg. A
+forrásfájlok változását külön handler kapja el.
+
+**Chown-pingpong.** A `/opt/stack/config` és `/opt/stack/plugins` könyvtárat az
+Ansible `ubuntu:ubuntu`-ra állította, az `airflow-init` konténer viszont minden
+induláskor visszaírta `50000:0`-ra. Így **minden futás `changed=1` lett volna, örökre** —
+két rendszer húzta egymás ellen ugyanazt a fájlt. A javítás: az Ansible eleve azt a
+tulajdonost állítsa be, amit az Airflow vár.
+
+Ez utóbbi jó példa arra, miért nem elég a „lefutott hibátlanul" mérce. A playbook
+`failed=0`-t írt, minden szolgáltatás `healthy` volt — a hiba csak a `--diff`
+kimenetéből derült ki.
