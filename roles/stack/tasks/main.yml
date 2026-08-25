@@ -34,8 +34,17 @@
     owner: root
     group: root
     mode: "0644"
-    validate: "sh -c 'cd %s/.. && docker compose -f %s config -q'"
   notify: stack ujrainditasa
+  tags: [stack]
+
+# A validate: kapcsolo itt NEM jo: az Ansible egy ideiglenes fajlon futtatna a
+# parancsot, ahol nincs .env - a valtozok feloldatlanul maradnanak, es a
+# validacio hamisan elbukna. Ezert kulon taskban ellenorzunk, a helyen.
+- name: A compose fajl ervenyessegenek ellenorzese
+  ansible.builtin.command:
+    cmd: docker compose config -q
+    chdir: "{{ stack_dir }}"
+  changed_when: false
   tags: [stack]
 
 - name: Az adatbazis-init szkript
