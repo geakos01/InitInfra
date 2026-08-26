@@ -7,5 +7,6 @@
 #       allowed_ips: [1.2.3.4]
 #
 # Ures listaval is KIRENDERELJUK a blokkot - lasd a sablon megjegyzeset.
-# A stack szerepkorok (5-6. fazis) toltik fel a publikalt portok alapjan.
+# A tenyleges erteket a group_vars/all.yml szamolja ki a publish_web_ui,
+# az allowed_ips es az api_allowed_ips alapjan.
 docker_user_rules: []

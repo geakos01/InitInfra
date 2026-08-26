@@ -55,6 +55,15 @@ verify_ellenorzesek:
       | grep -qE '^(0\.0\.0\.0|\*|\[::\]):({{ airflow_web_port }}|{{ grafana_port }}|{{ prometheus_port }}|{{ jupyter_port }}|{{ cadvisor_port }}|5432|6379)$'
     ha: "{{ not publish_web_ui }}"
 
+  # A fenti ellenorzes parja: ha publikalunk, a portoknak TENYLEG kint kell
+  # lenniuk. Enelkul a publish_web_ui csendben nem csinalna semmit - es a
+  # loopback-ellenorzes sem futna, tehat semmi nem szolna.
+  - nev: "Tuzfal: a publikalt feluletek kifele nyitva vannak"
+    parancs: >-
+      ss -ltnH | awk '{print $4}'
+      | grep -qE '^(0\.0\.0\.0|\*|\[::\]):{{ airflow_web_port }}$'
+    ha: "{{ publish_web_ui }}"
+
   # --- Docker ---------------------------------------------------------------
   # Go-sablont (a docker --format kapcsolojat) szandekosan nem hasznalunk
   # sehol: a {{ }} az Ansible-nek is Jinja, es a valtozo-behelyettesites

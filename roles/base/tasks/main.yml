@@ -86,6 +86,31 @@
     mode: "0600"
   tags: [base, swap]
 
+# A swapfajl merete UTOLAG nem valtozik magatol: a fenti "creates:" miatt a
+# fallocate nem fut ujra, ha a fajl mar ott van. Egy megnovelt swap_size_mb
+# tehat CSENDBEN nem lepne eletbe - ezert inkabb hangosan megallunk.
+#
+# Automatikusan azert nem meretezzuk at, mert ahhoz ki kell kapcsolni a swapot,
+# ami memoriahiany eseten megolhet futo folyamatokat. Ez a dontes az emberre
+# tartozik, nem a telepitore.
+- name: A swapfajl adatai
+  ansible.builtin.stat:
+    path: /swapfile
+  register: swapfajl
+  tags: [base, swap]
+
+- name: A swapfajl merete nem egyezik a kerttel
+  ansible.builtin.fail:
+    msg: >-
+      A /swapfile {{ (swapfajl.stat.size / 1048576) | round | int }} MB, de a
+      swap_size_mb most {{ swap_size_mb }} MB-ot ker. A meret utolagos
+      valtoztatasa nem automatikus. Ha a gepen most biztonsagos kikapcsolni a
+      swapot: sudo swapoff /swapfile && sudo rm /swapfile - majd make dev.
+  when:
+    - swapfajl.stat.exists
+    - (swapfajl.stat.size / 1048576) | round | int != swap_size_mb | int
+  tags: [base, swap]
+
 # A mkswap ujrafuttatasa "changed"-et irna minden korben, ezert csak akkor
 # fut, ha a swap meg nincs bekapcsolva.
 - name: Swap formazasa es bekapcsolasa

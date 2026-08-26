@@ -1,4 +1,20 @@
 ---
+# A publikalas MINDIG szukitessel jar. Enelkul a Jupyter - ami teljes koru
+# kodfuttatas az eles adatbazis elereseval - kikerulne a nyilt internetre,
+# egyetlen tokennel vedve.
+#
+# Ezert ez kemeny leallas, nem figyelmeztetes: aki publikalni akar, annak meg
+# kell mondania, KINEK. A dontest nem hozzuk meg helyette.
+- name: A publikalashoz IP-lista kell
+  ansible.builtin.fail:
+    msg: >-
+      publish_web_ui: true, de az allowed_ips ures. Ez a negy admin feluletet
+      (Airflow, Grafana, Prometheus, Jupyter) a teljes internet fele nyitna ki.
+      Add meg a group_vars-ban, honnan szabad elerni oket - vagy hagyd a
+      publish_web_ui-t false-on, es hasznalj SSH-alagutat.
+  when: publish_web_ui and allowed_ips | length == 0
+  tags: [stack]
+
 - name: Titkok elokeszitese
   ansible.builtin.include_tasks: secrets.yml
   tags: [stack]
