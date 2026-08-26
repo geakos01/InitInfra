@@ -20,9 +20,12 @@ végigment: 10-11 perc, `ok=56, changed=35`, verify **28/28**, kilépési kód 0
 curl -fsSL https://raw.githubusercontent.com/geakos01/InitInfra/main/bootstrap.sh | sudo bash
 ```
 
+Az átnézés megvolt, a `README.md` megvan. **A v1 kész.**
+
 **Következő a 9. fázis: az igazi gép.** A Rackforest szerveren ugyanez az egy parancs.
 Utána jön az ügyfélkód a `/opt/app`-ba, és ha kell, a felületek publikálása
-(`publish_web_ui` + `allowed_ips` a `group_vars/<gép>.yml`-ben).
+(`publish_web_ui` + `allowed_ips` a `group_vars/<gép>.yml`-ben — az IP-lista kötelező,
+üresen a telepítő megtagadja).
 
 ### A repó
 
@@ -32,6 +35,7 @@ Utána jön az ügyfélkód a `/opt/app`-ba, és ha kell, a felületek publikál
 | `docs/ROADMAP.md` | 10 fázis, fázisonként kész-kritériummal |
 | `docs/manual-install.md` | **az 1. fázis terméke** — a kézi telepítés minden parancsa, indoklással |
 | `docs/WORKLOG.md` | ez a fájl |
+| `README.md` | belépő: mit rak fel, napi parancsok, hozzáférés, beállítás |
 | `bootstrap.sh` | **a publikus belépési pont** — `curl … | sudo bash` egy szűz gépen |
 | `site.yml`, `ansible.cfg`, `Makefile` | `make dev`, `make verify`, `make lint`, `make idempotens` |
 | `inventory/`, `group_vars/all.yml` | pull modell (`localhost`), minden gépfüggő változó |
@@ -753,3 +757,102 @@ az első ügyfélnél derült volna ki.
 **A hibák fele nem a telepítésben volt, hanem abban, hogy mit jelentünk késznek.**
 A 2., 3. és 4. pont mind erről szól: a telepítő túl korán mondta, hogy kész, vagy
 olyat ellenőrzött, ami még nem lehetett igaz.
+
+---
+
+## 2026-08-26 — Átnézés és dokumentáció
+
+### Mi történt
+
+A projekt kész, tehát elolvastam az egészet még egyszer, kívülről: nem azt keresve,
+hogy működik-e, hanem hogy **van-e olyan kapcsoló, ami hazudik** — ami dokumentálva
+van, de nem csinál semmit.
+
+Egy ilyet találtam, és az fontos volt.
+
+### A `publish_web_ui` nem publikált semmit
+
+A `group_vars`-ban ott áll a kapcsoló, egy egész bekezdésnyi magyarázattal. A compose
+sablonban viszont mind a négy admin felület portja **be volt drótozva `127.0.0.1`-re**.
+Vagyis: `publish_web_ui: true` mellett a gép legenerálta a `DOCKER-USER` szűrőszabályokat
+— olyan portokra, amik továbbra sem látszottak kifelé. A kapcsoló csendben nem csinált
+semmit.
+
+Ami ezt igazán rosszá teszi: a `verify` loopback-ellenőrzése `ha: not publish_web_ui`
+feltétellel fut. Publikálásra kapcsolva tehát **még az ellenőrzés is elhallgatott volna**
+— senki nem szólt volna, hogy a felületek nem érhetők el.
+
+Ez pontosan ugyanaz a hibafajta, mint a 6. fázisban a mindig üres `docker_user_rules`:
+a szándék megvolt a konfigurációban, csak nem ért el a végrehajtásig.
+
+**A javítás két részes.** A kötés mostantól a kapcsolót követi — de a Postgres, a Redis
+és a cAdvisor **mindig loopbackon marad**, azoknak nincs mit publikálni. És mivel a
+publikálás IP-lista nélkül a Jupytert (teljes körű kódfuttatás az éles adatbázison)
+nyitná ki a világ felé, a telepítő ezt most **megtagadja**:
+
+```
+publish_web_ui: true, de az allowed_ips ures. Ez a negy admin feluletet a teljes
+internet fele nyitna ki. Add meg, honnan szabad elerni oket - vagy hagyd a
+publish_web_ui-t false-on, es hasznalj SSH-alagutat.
+```
+
+Mérve, mindkét irányban:
+
+| | |
+|---|---|
+| IP-lista nélkül | a playbook megáll, mielőtt bármit csinálna |
+| IP-listával | a négy port `0.0.0.0`-n, nyolc `DOCKER-USER` szabály, Postgres/Redis loopbackon |
+| Kívülről (nem engedett IP) | **eldobva** — a gépen belülről ugyanez `200` |
+| Vissza `false`-ra | a portok visszaköltöznek, a lánc kiürül |
+
+Új ellenőrzés is került mellé, a loopback-vizsgálat párjaként: publikálás esetén a
+portoknak *tényleg* kint kell lenniük.
+
+### Két kapcsoló, ami félig működött
+
+**`swap_size_mb`** — a swapfájl `creates:` feltétellel jön létre, tehát a méret
+megváltoztatása a már telepített gépen nem lépett volna életbe. Automatikus átméretezés
+nincs (ahhoz ki kell kapcsolni a swapot, ami memóriahiány esetén megölhet futó
+folyamatokat), viszont a telepítő most **észreveszi az eltérést és megáll**, a pontos
+teendővel. A csendes „nem történt semmi" a rosszabbik változat.
+
+**`ssh_port`** — ez csak a tűzfalnak mondja meg, hol figyel az sshd; magát az sshd-t nem
+állítja át. Ez rendben van így, de eddig nem volt leírva. Most oda van írva, a
+sorrenddel együtt: előbb az sshd, csak utána ez — fordítva kizárod magad.
+
+### Egy hiba, amit majdnem bejelentettem
+
+Az `app image ujraepitese` handler értesíti a `stack ujrainditasa` handlert, ami
+**előbb** van definiálva. Az Ansible a handlereket definíciós sorrendben futtatja, tehát
+ez gyanús volt: úgy tűnt, egy image-újraépítés után a stack nem indulna újra a friss
+image-dzsel.
+
+Írtam rá egy tesztet, és az igazolta a gyanút — csakhogy **a teszt volt rossz**: a
+`debug` modul sosem ír `changed`-et, és csak `changed` task értesít. Valódi paranccsal
+megismételve mindkét sorrend rendben működik. Nincs hiba.
+
+Érdemes megjegyezni: a tesztem *megerősítette* azt, amit előre gondoltam, és ettől
+tűnt hitelesnek. Egy mérés, ami pont a várt eredményt adja, ugyanúgy lehet hibás,
+mint bármelyik másik.
+
+### Apróságok
+
+- `ansible.cfg`: az `interpolate_vars = true` nem létező beállítás — az
+  `ansible-config list` nem ismeri. Némán figyelmen kívül hagyódott. Törölve.
+- A `docker` szerepkör alapértelmezéseiben elavult komment a `docker_user_rules`
+  eredetéről (a `group_vars` számolja, nem a stack szerepkör).
+- Az `.env` sablonja `api_enabled`-re nézett, miközben a compose már `api_indithato`-ra.
+  Nem okozott hibát, de a kettőnek együtt kell mozognia.
+
+### README
+
+A repónak eddig **nem volt README-je** — egy publikus `curl | bash` belépési ponthoz ez
+volt a legszembetűnőbb hiány. Most van: mit rak fel, mit *nem* csinál, a napi parancsok,
+a hozzáférés, a saját kód felrakása, és egy „ha ezt akarod megváltoztatni, ide nyúlj"
+táblázat.
+
+### Az átnézés mérlege
+
+Egy valódi hiba (a nem működő publikálás), két félig működő kapcsoló, három apróság —
+és egy téves riasztás, amit a saját tesztem okozott. A playbook a javítások után is
+`changed=0` másodszorra, a verify 28/28.

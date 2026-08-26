@@ -9,6 +9,11 @@
 timezone: Europe/Budapest
 
 # A dev VM 8 GB RAM-os, az eles gep akar 32 GB. A swap ne legyen bedrotozva.
+#
+# FIGYELEM: ez az ertek a MAR LETEZO swapfajlt nem irja at. A telepito eszreveszi
+# az elterest es hangosan megall, utasitassal - automatikusan azert nem meretez
+# at, mert ahhoz ki kell kapcsolni a swapot, ami memoriahiany eseten megolhet
+# futo folyamatokat.
 swap_size_mb: 4096
 # 10 = csak akkor swapelj, ha tenyleg muszaj. Adatbazist futtato gepen nem
 # akarjuk, hogy a kernel kedvtelesbol lapozzon ki memoriat.
@@ -21,6 +26,10 @@ swappiness: 10
 apt_force_ipv4: true
 
 # --- SSH es tuzfal ----------------------------------------------------------
+# Ez csak azt mondja meg a TUZFALNAK, melyik porton figyel az sshd - magat az
+# sshd-t NEM konfiguralja at. Ha a gepen mas portra rakod az SSH-t, eloszor az
+# sshd-t alld at, csak utana ird at ezt (kulonben kizarod magad), es a regi
+# port ufw-szabalyat kezzel kell torolni.
 ssh_port: 22
 fail2ban_bantime: 1h
 fail2ban_findtime: 10m
@@ -36,6 +45,10 @@ docker_users:
 #
 # FIGYELEM: a Docker megkeruli az ufw-t (lasd docs/manual-install.md 4. szakasz).
 # Az allowed_ips ezert NEM ufw szabalyokat general, hanem DOCKER-USER lancot.
+#
+# Az allowed_ips publikalas eseten KOTELEZO: ures listaval a telepito megtagadja
+# a futast. A Jupyter teljes koru kodfuttatas az eles adatbazis elereseval - azt
+# nem nyitjuk ki a vilag fele egyetlen tokennel vedve.
 publish_web_ui: false
 allowed_ips: []
 
