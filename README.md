@@ -105,9 +105,21 @@ konténer-port ufw-vel nem szűrhető. Mérés és részletek:
 
 ## A saját kódod
 
+A `/opt/app`-ot a playbook mar letrehozta, a te tulajdonodban. **Ne `sudo`-val
+klonozz** — root tulajdonu repoban a kesobbi `git pull` `dubious ownership`-pel
+megtagadna a mukodest:
+
 ```bash
-sudo git clone <a-te-repod> /opt/app
-cd /opt/initinfra && sudo make dev
+git clone <a-te-repod> /opt/app
+cd /opt/initinfra && make dev
+```
+
+Privat repohoz **deploy key** kell (a repo Settings → Deploy keys menujeben, iras
+nelkul). Jelszot es tokent ne tegyel a szerver lemezere:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_app -N ""
+cat ~/.ssh/id_app.pub        # ezt masold be a GitHubon
 ```
 
 A `/opt/app/dags`-ba tett DAG-fájlokat az Airflow magától megtalálja. Az `api`
