@@ -1,3 +1,14 @@
+# MEGJEGYZES a DROP szabalyokrol: csak celportra illeszkednek, forrashalozatra
+# nem. Felmerul, hogy ezzel a KONTENEREK KOZOTTI forgalmat is eldobnank (pl.
+# scheduler -> apiserver:8080). Meressel: NEM. Az azonos bridge-en levo
+# kontenerek forgalma L2-n hidalodik, es nem megy at a FORWARD lancon - a
+# szamlalok nullan maradnak, a belso hivasok 200-at adnak.
+#
+# EZ AZONBAN A br_netfilter MODULTOL FUGG. Ha valami betolti (Kubernetes,
+# vagy egy masik halozati eszkoz), a hidalt forgalom is bekerul a FORWARD
+# lancba, es ezek a szabalyok elkezdenek belso forgalmat vagni. Ellenorzes:
+#   sysctl net.bridge.bridge-nf-call-iptables    # ha letezik es 1, figyelj
+# Ilyenkor a szabalyokat forrashalozatra is szukiteni kell (! -s 172.16/12).
 *filter
 {# A kovetkezo sor NULLAZZA a lancot ufw reload-kor. Ezert kell a blokkot MINDIG
    kirenderelni, akkor is, ha nincs egyetlen szabaly sem: kulonben a korabban
