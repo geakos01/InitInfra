@@ -56,10 +56,15 @@ cd /opt/initinfra
 
 make verify     # Készen áll a gép? Mér, de nem változtat semmit.
 make dev        # A playbook futtatása. Ez a fő parancs.
-make check      # Szárazon: megmutatja, mit csinálna — de nem csinálja.
+make check      # Mit változtatna? Lásd lentebb — csak telepített gépen.
 make diff       # Pontosan melyik sor változna.
 make idempotens # Kétszer futtat, és hibát jelez, ha a második változtat.
 ```
+
+A `make check` **csak már telepített gépen ad értelmes választ.** Szűz gépen
+elhasal, és ez nem hiba: száraz módban a korábbi lépések nem hozzák létre azt az
+állapotot, amire a későbbiek épülnek (a `/swapfile` nem jön létre, tehát a
+jogosultságát sem lehet beállítani). Első telepítéskor egyből `make dev`.
 
 A munkamódszer: **a repóban javítasz, a gépen futtatod.**
 

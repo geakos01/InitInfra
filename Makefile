@@ -13,7 +13,7 @@ dev:  ## A playbook futtatasa helyben (ez a fo parancs)
 verify:  ## Ellenorzi, hogy a gep keszen all-e (nem valtoztat semmit)
 	$(ANSIBLE) --tags verify $(PLAYBOOK)
 
-check:  ## Szarazon futtatas - nem valtoztat semmit
+check:  ## Mit valtoztatna? Csak MAR TELEPITETT gepen ertelmes
 	$(ANSIBLE) --check --diff $(PLAYBOOK)
 
 diff:  ## Csak a valtozasokat mutatja
