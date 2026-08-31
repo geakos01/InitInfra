@@ -96,6 +96,10 @@
 - name: A swapfajl adatai
   ansible.builtin.stat:
     path: /swapfile
+    # Csak a MERET kell. A stat alapertelmezesben SHA1-et szamol a fajlrol -
+    # egy 4 GB-os swapfajlon ez meressel 4,07 masodperc a 0,78 helyett, minden
+    # egyes futasnal. Nagyobb swapnel aranyosan tobb.
+    get_checksum: false
   register: swapfajl
   tags: [base, swap]
 

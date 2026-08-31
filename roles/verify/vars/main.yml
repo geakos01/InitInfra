@@ -47,21 +47,29 @@ verify_ellenorzesek:
     parancs: iptables -S DOCKER-USER | grep -q -- '-N DOCKER-USER'
 
   # A Docker kozvetlenul az iptables FORWARD lancaba ir, az ufw ele. Ha egy
-  # kontener-port 0.0.0.0-n hallgat, azt az ufw NEM szuri - ezert
-  # alapertelmezesben mindegyik admin portnak loopbackon kell lennie.
-  - nev: "Tuzfal: az admin portok csak loopbackon hallgatnak"
+  # kontener-port 0.0.0.0-n hallgat, azt az ufw NEM szuri.
+  #
+  # Ez a harom SOSEM publikalhato: ket adattarolo, es a cAdvisor, aminek nincs
+  # sajat hitelesitese. A publish_web_ui rajuk NEM vonatkozik - ezert fut ez az
+  # ellenorzes feltetel nelkul, publikalas modban is.
+  - nev: "Tuzfal: a Postgres, a Redis es a cAdvisor sosem latszik kifele"
     parancs: >-
       ! ss -ltnH | awk '{print $4}'
-      | grep -qE '^(0\.0\.0\.0|\*|\[::\]):({{ airflow_web_port }}|{{ grafana_port }}|{{ prometheus_port }}|{{ jupyter_port }}|{{ cadvisor_port }}|5432|6379)$'
+      | grep -qE '^(0\.0\.0\.0|\*|\[::\]):({{ cadvisor_port }}|5432|6379)$'
+
+  - nev: "Tuzfal: a webes feluletek csak loopbackon hallgatnak"
+    parancs: >-
+      ! ss -ltnH | awk '{print $4}'
+      | grep -qE '^(0\.0\.0\.0|\*|\[::\]):({{ airflow_web_port }}|{{ grafana_port }}|{{ prometheus_port }}|{{ jupyter_port }})$'
     ha: "{{ not publish_web_ui }}"
 
-  # A fenti ellenorzes parja: ha publikalunk, a portoknak TENYLEG kint kell
-  # lenniuk. Enelkul a publish_web_ui csendben nem csinalna semmit - es a
-  # loopback-ellenorzes sem futna, tehat semmi nem szolna.
-  - nev: "Tuzfal: a publikalt feluletek kifele nyitva vannak"
-    parancs: >-
-      ss -ltnH | awk '{print $4}'
-      | grep -qE '^(0\.0\.0\.0|\*|\[::\]):{{ airflow_web_port }}$'
+  # A fenti parja. MIND A NEGYET nezi: ha csak az egyiket ellenoriznenk, a
+  # tobbi harom csendben kimaradhatna a publikalasbol.
+  - nev: "Tuzfal: mind a negy publikalt felulet kifele nyitva van"
+    parancs: |
+      for p in {{ airflow_web_port }} {{ grafana_port }} {{ prometheus_port }} {{ jupyter_port }}; do
+        ss -ltnH | awk '{print $4}' | grep -qE "^(0\.0\.0\.0|\*|\[::\]):${p}\$"           || { echo "nem nyitott: $p"; exit 1; }
+      done
     ha: "{{ publish_web_ui }}"
 
   # --- Docker ---------------------------------------------------------------

@@ -41,7 +41,7 @@ A telepítéshez nem kell semmi a te gépeden, csak egy URL.
 **Idempotens.** Ugyanaz a parancs kétszer futtatva nem csinál kárt. A második futásnak
 `changed=0`-t kell írnia — ha nem, ott valami minden körben újra dolgozik.
 
-**Ellenőrzött.** A `make verify` harminc mérést végez a futó gépen. Nem azt nézi, hogy „fut-e",
+**Ellenőrzött.** A `make verify` közel harminc mérést végez a futó gépen (a pontos szám a beállításoktól függ). Nem azt nézi, hogy „fut-e",
 hanem hogy jól van-e — mert a legdrágább hibák azok, ahol a rendszer egészségesnek
 mondja magát.
 
